@@ -24,6 +24,7 @@ RUN mkdir -p /app/outputs
 ENV YOLO_CONFIG_DIR=/tmp/Ultralytics
 ENV PYTHONUNBUFFERED=1
 
+
 EXPOSE 8000
 
 

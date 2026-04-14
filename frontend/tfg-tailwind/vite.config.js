@@ -28,5 +28,15 @@ export default defineConfig({
 		alias: {
 			"@": path.resolve(__dirname, "./src")
 		}
+	},
+	server: {
+		host: true,
+		proxy: {
+			'/api': {
+				target: 'http://147.83.159.200:8000',
+				changeOrigin: true,
+				secure: false
+				}
+		}
 	}
 });
