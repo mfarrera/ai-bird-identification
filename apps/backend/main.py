@@ -1,14 +1,16 @@
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from database import get_connection
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from urllib.parse import parse_qs
+from email.message import EmailMessage
 
 import psycopg
 import os
 import jwt
+import smtplib
 
 import secrets
 
@@ -18,7 +20,7 @@ app = FastAPI()
 load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY")
-STREAM_BASE_URL = os.getenv("STREAM_BASE_URL", "wss://media.plataforma.org/live")
+STREAM_BASE_URL = os.getenv("STREAM_BASE_URL", "127.0.0.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -137,6 +139,37 @@ class CommunityCamerasAdd(BaseModel):
 
 class CommunityLeaderUpdate(BaseModel):
     leader_id: int
+
+class CameraRequestCreate(BaseModel):
+    url: str
+    latitude: float
+    longitude: float
+
+class CameraDecision(BaseModel):
+    decision: str
+    rejection_reason: str | None = None
+
+
+def send_email(to_email: str, subject: str, body: str):
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_from = os.getenv("SMTP_FROM", smtp_user)
+
+    if not smtp_host or not smtp_user or not smtp_password:
+        raise RuntimeError("La configuració SMTP no està completa")
+
+    message = EmailMessage()
+    message["From"] = smtp_from
+    message["To"] = to_email
+    message["Subject"] = subject
+    message.set_content(body)
+
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(message)
 
 def generate_session_token(user_id: int, mail: str, role: str, expires_minutes: int = 120):
     """
@@ -400,6 +433,321 @@ def login_user(data: LoginData):
 
 
     ##############camara##############
+
+@app.post("/api/cameras/requests")
+def request_camera(data: CameraRequestCreate, request: Request):
+    """
+    Crea una sol·licitud de càmera amb estat pending.
+    L'owner s'obté del token de sessió.
+    """
+
+    payload = verify_token(request)
+    user_id = payload.get("user_id")
+
+    if user_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="El token no conté user_id"
+        )
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT id
+            FROM users
+            WHERE id = %s
+        """, (user_id,))
+
+        if cur.fetchone() is None:
+            raise HTTPException(
+                status_code=404,
+                detail="L'usuari no existeix"
+            )
+
+        cur.execute("""
+            INSERT INTO camera (
+                url,
+                owner_id,
+                latitude,
+                longitude,
+                camera_status
+            )
+            VALUES (%s, %s, %s, %s, 'pending')
+            RETURNING
+                id,
+                url,
+                owner_id,
+                latitude,
+                longitude,
+                camera_status
+        """, (
+            data.url,
+            user_id,
+            data.latitude,
+            data.longitude
+        ))
+
+        row = cur.fetchone()
+        conn.commit()
+
+        return {
+            "message": "Sol·licitud de càmera creada correctament",
+            "camera": {
+                "id": row[0],
+                "url": row[1],
+                "owner_id": row[2],
+                "latitude": str(row[3]),
+                "longitude": str(row[4]),
+                "camera_status": row[5]
+            }
+        }
+
+    finally:
+        cur.close()
+        conn.close()
+
+@app.get("/api/admin/camera-requests")
+def get_pending_camera_requests(request: Request):
+    payload = verify_token(request)
+
+    if payload.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Només els administradors poden veure les sol·licituds"
+        )
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT
+                c.id,
+                c.url,
+                c.latitude,
+                c.longitude,
+                c.camera_status,
+                c.owner_id,
+                u.mail
+            FROM camera c
+            JOIN users u ON u.id = c.owner_id
+            WHERE c.camera_status = 'pending'
+            ORDER BY c.id ASC
+        """)
+
+        rows = cur.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "url": row[1],
+                "latitude": str(row[2]),
+                "longitude": str(row[3]),
+                "camera_status": row[4],
+                "owner_id": row[5],
+                "owner_mail": row[6]
+            }
+            for row in rows
+        ]
+
+    finally:
+        cur.close()
+        conn.close()
+
+@app.put("/api/admin/cameras/{camera_id}/decision")
+def review_camera_request(
+    camera_id: int,
+    data: CameraDecision,
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """
+    Accepta o denega una sol·licitud de càmera.
+
+    Si s'accepta:
+    - genera publish_token;
+    - canvia l'estat a accepted;
+    - envia les credencials de publicació per correu.
+
+    Si es denega:
+    - canvia l'estat a denied;
+    - guarda el motiu;
+    - envia un correu a l'usuari.
+    """
+
+    payload = verify_token(request)
+
+    if payload.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Només els administradors poden revisar càmeres"
+        )
+
+    admin_id = payload.get("user_id")
+
+    if data.decision not in ["accepted", "denied"]:
+        raise HTTPException(
+            status_code=400,
+            detail="La decisió ha de ser accepted o denied"
+        )
+
+    if data.decision == "denied" and not data.rejection_reason:
+        raise HTTPException(
+            status_code=400,
+            detail="Cal indicar el motiu de denegació"
+        )
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT
+                c.id,
+                c.camera_status,
+                c.owner_id,
+                u.mail
+            FROM camera c
+            JOIN users u ON u.id = c.owner_id
+            WHERE c.id = %s
+            FOR UPDATE
+        """, (camera_id,))
+
+        camera_row = cur.fetchone()
+
+        if camera_row is None:
+            raise HTTPException(
+                status_code=404,
+                detail="La càmera no existeix"
+            )
+
+        current_status = camera_row[1]
+        owner_mail = camera_row[3]
+
+        if current_status != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail="Aquesta sol·licitud ja ha estat revisada"
+            )
+
+        now = datetime.now(timezone.utc)
+
+        if data.decision == "accepted":
+            publish_token = secrets.token_urlsafe(32)
+
+            cur.execute("""
+                UPDATE camera
+                SET camera_status = 'accepted',
+                    publish_token = %s,
+                    rejection_reason = NULL,
+                    reviewed_at = %s,
+                    reviewed_by = %s
+                WHERE id = %s
+            """, (
+                publish_token,
+                now,
+                admin_id,
+                camera_id
+            ))
+
+            conn.commit()
+
+            cloud_host = os.getenv("CLOUD_HOST", "localhost")
+            cloud_rtsp_port = os.getenv("CLOUD_RTSP_PORT", "8554")
+
+            rtsp_url = (
+                f"rtsp://{camera_id}:{publish_token}"
+                f"@{cloud_host}:{cloud_rtsp_port}/cam{camera_id}"
+            )
+
+            email_body = f"""
+La teva càmera amb identificador {camera_id} ha estat acceptada.
+
+Credencials de publicació:
+
+CAMERA_ID={camera_id}
+CAMERA_TOKEN={publish_token}
+RTSP_URL={rtsp_url}
+
+Exemple amb Docker:
+
+docker run --rm \\
+  -e CAMERA_ID={camera_id} \\
+  -e CAMERA_TOKEN="{publish_token}" \\
+  -e RTSP_URL="{rtsp_url}" \\
+  yourorg/birdcam-agent
+
+Exemple amb FFmpeg:
+
+ffmpeg -f dshow -i video="NOM_DE_LA_CAMERA" \\
+  -c:v libx264 -f rtsp "{rtsp_url}"
+
+No comparteixis el CAMERA_TOKEN. Aquesta credencial només permet publicar
+el stream corresponent a aquesta càmera.
+""".strip()
+
+            background_tasks.add_task(
+                send_email,
+                owner_mail,
+                "Càmera acceptada",
+                email_body
+            )
+
+            return {
+                "message": "Càmera acceptada correctament",
+                "camera_id": camera_id,
+                "camera_status": "accepted"
+            }
+
+        cur.execute("""
+            UPDATE camera
+            SET camera_status = 'denied',
+                publish_token = NULL,
+                rejection_reason = %s,
+                reviewed_at = %s,
+                reviewed_by = %s
+            WHERE id = %s
+        """, (
+            data.rejection_reason,
+            now,
+            admin_id,
+            camera_id
+        ))
+
+        conn.commit()
+
+        email_body = f"""
+La sol·licitud de la càmera amb identificador {camera_id} ha estat denegada.
+
+Motiu:
+
+{data.rejection_reason}
+""".strip()
+
+        background_tasks.add_task(
+            send_email,
+            owner_mail,
+            "Sol·licitud de càmera denegada",
+            email_body
+        )
+
+        return {
+            "message": "Càmera denegada correctament",
+            "camera_id": camera_id,
+            "camera_status": "denied",
+            "rejection_reason": data.rejection_reason
+        }
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cur.close()
+        conn.close()
+
 
 @app.post("/api/cameras")
 def create_camera(camera: CameraCreate):
@@ -765,28 +1113,53 @@ def get_camera_stream(camera_id: int, request: Request):
     Endpoint: GET /api/cameras/{camera_id}/stream
 
     Què fa:
-    - Valida el token de sessió de l'usuari
-    - Comprova que la càmera existeixi
-    - Comprova si l'usuari té permís per veure aquesta càmera
-    - Genera un token temporal per al stream
-    - Retorna la URL HLS del Media Server i el token temporal
+    - Valida el token de sessió.
+    - Obté l'usuari connectat.
+    - Comprova que la càmera existeixi.
+    - Comprova que la càmera estigui acceptada.
+    - Comprova els permisos d'accés:
+        * admin global
+        * propietari de la càmera
+        * privacitat public
+        * privacitat community i pertinença a una comunitat
+          associada a aquesta càmera
+    - Genera un JWT temporal de lectura.
+    - Retorna la URL HLS, el token i la data de caducitat.
     """
 
+    # ------------------------------------------------------------
+    # 1. Validar el token de sessió
+    # ------------------------------------------------------------
     payload = verify_token(request)
 
-    user_id = payload["user_id"]
-    role = payload["role"]
+    user_id = payload.get("user_id")
+    role = payload.get("role")
+
+    if user_id is None or role is None:
+        raise HTTPException(
+            status_code=401,
+            detail="El token de sessió no conté la informació necessària"
+        )
 
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        # Comprovem que la càmera existeix
+        # ------------------------------------------------------------
+        # 2. Obtenir la càmera, el propietari i la privacitat
+        # ------------------------------------------------------------
         cur.execute("""
-            SELECT id, owner_id
-            FROM camera
-            WHERE id = %s
+            SELECT
+                c.id,
+                c.owner_id,
+                c.camera_status,
+                u.privacity
+            FROM camera c
+            JOIN users u
+              ON u.id = c.owner_id
+            WHERE c.id = %s
         """, (camera_id,))
+
         camera_row = cur.fetchone()
 
         if camera_row is None:
@@ -795,53 +1168,64 @@ def get_camera_stream(camera_id: int, request: Request):
                 detail="La càmera no existeix"
             )
 
+        db_camera_id = camera_row[0]
         owner_id = camera_row[1]
+        camera_status_value = camera_row[2]
+        privacity = camera_row[3]
 
-        # 1. Admin global
+        # ------------------------------------------------------------
+        # 3. La càmera ha d'estar acceptada
+        # ------------------------------------------------------------
+        if camera_status_value != "accepted":
+            raise HTTPException(
+                status_code=403,
+                detail="La càmera no està acceptada"
+            )
+
+        # ------------------------------------------------------------
+        # 4. Comprovar permisos
+        # ------------------------------------------------------------
+        allowed = False
+
+        # Admin global
         if role == "admin":
             allowed = True
 
-        # 2. Owner de la càmera
+        # Propietari de la càmera
         elif owner_id == user_id:
             allowed = True
 
-        # 3. Privacitat del propietari
-        else:
+        # Càmera pública
+        elif privacity == "public":
+            allowed = True
+
+        # Accés per comunitat
+        elif privacity == "community":
             cur.execute("""
-                SELECT u.privacity
-                FROM users u
-                JOIN camera c ON c.owner_id = u.id
-                WHERE c.id = %s
-            """, (camera_id,))
-            privacy_row = cur.fetchone()
+                SELECT 1
+                FROM camera_community cc
+                JOIN community_member cm
+                  ON cm.community_id = cc.community_id
+                WHERE cc.camera_id = %s
+                  AND cm.user_id = %s
+                LIMIT 1
+            """, (
+                camera_id,
+                user_id
+            ))
 
-            if privacy_row is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No s'ha pogut determinar la privacitat"
-                )
+            community_access = cur.fetchone()
+            allowed = community_access is not None
 
-            privacity = privacy_row[0]
+        # Privacitat private
+        elif privacity == "private":
+            allowed = False
 
-            if privacity == "public":
-                allowed = True
-
-            elif privacity == "community":
-                cur.execute("""
-                    SELECT 1
-                    FROM community_member cm1
-                    JOIN community_member cm2
-                      ON cm1.community_id = cm2.community_id
-                    WHERE cm1.user_id = %s
-                      AND cm2.user_id = %s
-                    LIMIT 1
-                """, (user_id, owner_id))
-                same_community = cur.fetchone()
-                allowed = same_community is not None
-
-            else:
-                # private
-                allowed = False
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="La privacitat de l'usuari no és vàlida"
+            )
 
         if not allowed:
             raise HTTPException(
@@ -849,15 +1233,21 @@ def get_camera_stream(camera_id: int, request: Request):
                 detail="No tens permisos per veure aquest stream"
             )
 
-        # Generem token temporal del stream
+        # ------------------------------------------------------------
+        # 5. Generar token temporal de lectura
+        # ------------------------------------------------------------
         token, expires_at = generate_stream_token(
             user_id=user_id,
-            camera_id=camera_id,
+            camera_id=db_camera_id,
             expires_minutes=5
         )
 
+        # ------------------------------------------------------------
+        # 6. Retornar URL HLS i token
+        # ------------------------------------------------------------
         return {
-            "hls_url": f"http://localhost:8888/cam{camera_id}/index.m3u8",
+            "camera_id": db_camera_id,
+            "hls_url": f"{STREAM_BASE_URL}/cam{db_camera_id}/index.m3u8",
             "token": token,
             "expires": expires_at.isoformat()
         }
@@ -945,7 +1335,7 @@ def mediamtx_auth(data: MediaMTXAuthRequest):
 
         try:
             cur.execute("""
-                SELECT id, publish_token
+                SELECT id, publish_token, camera_status
                 FROM camera
                 WHERE id = %s
             """, (camera_id,))
@@ -973,102 +1363,6 @@ def mediamtx_auth(data: MediaMTXAuthRequest):
         finally:
             cur.close()
             conn.close()
-
-
-    # ------------------------------------------------------------
-    # 2. Per llegir streams, exigim token
-    # ------------------------------------------------------------
-    if data.action not in ["read", "playback"]:
-        raise HTTPException(
-            status_code=403,
-            detail="Acció no permesa"
-        )
-
-    raw_token = None
-
-    if data.token:
-        raw_token = data.token
-    elif data.password:
-        raw_token = data.password
-    elif data.query:
-        parsed_query = parse_qs(data.query)
-        if "jwt" in parsed_query and len(parsed_query["jwt"]) > 0:
-            raw_token = parsed_query["jwt"][0]
-        elif "token" in parsed_query and len(parsed_query["token"]) > 0:
-            raw_token = parsed_query["token"][0]
-
-    if raw_token is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Falta el token"
-        )
-
-    try:
-        payload = jwt.decode(raw_token, SECRET_KEY, algorithms=["HS256"])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=401,
-            detail="El token ha caducat"
-        )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=401,
-            detail="El token no és vàlid"
-        )
-
-    token_camera_id = payload.get("camera_id")
-    token_user_id = payload.get("user_id")
-
-    if token_camera_id is None or token_user_id is None:
-        raise HTTPException(
-            status_code=401,
-            detail="El token no conté la informació necessària"
-        )
-
-    requested_path = data.path or ""
-    requested_camera_id = requested_path.replace("cam", "")
-
-    if str(token_camera_id) != str(requested_camera_id):
-        raise HTTPException(
-            status_code=403,
-            detail="Aquest token no té permís per accedir a aquest stream"
-        )
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        cur.execute("""
-            SELECT id
-            FROM users
-            WHERE id = %s
-        """, (token_user_id,))
-        user_row = cur.fetchone()
-
-        if user_row is None:
-            raise HTTPException(
-                status_code=401,
-                detail="L'usuari del token no existeix"
-            )
-
-        cur.execute("""
-            SELECT id
-            FROM camera
-            WHERE id = %s
-        """, (token_camera_id,))
-        camera_row = cur.fetchone()
-
-        if camera_row is None:
-            raise HTTPException(
-                status_code=401,
-                detail="La càmera del token no existeix"
-            )
-
-        return {"status": "ok"}
-
-    finally:
-        cur.close()
-        conn.close()
 
 ############DETECTIONS#########
 

@@ -14,6 +14,7 @@ import VeureStreamAdmin from './pages/VeureStreamAdmin'
 import CrearComunitat from './pages/CrearComunitat'
 import LlistarComunitats from './pages/LlistarComunitats'
 import GestionarComunitat from './pages/GestionarComunitat'
+import NotificacionsCameres from './pages/NotificacionsCameres'
 
 function App() {
   return (
@@ -36,6 +37,8 @@ function App() {
         <Route path="/admin/crear-comunitat" element={<CrearComunitat />} />
         <Route path="/admin/comunitats" element={<LlistarComunitats />} />
         <Route path="/admin/comunitats/:communityId" element={<GestionarComunitat />} />
+        <Route path="/admin/notificacions-cameres" element={<NotificacionsCameres />}
+/>
       </Routes>
     </BrowserRouter>
   )

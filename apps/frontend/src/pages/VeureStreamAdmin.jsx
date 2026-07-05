@@ -61,6 +61,10 @@ function VeureStreamAdmin() {
         setExpires(data.expires || '')
 
         const hlsUrl = `${data.hls_url}?jwt=${encodeURIComponent(data.token)}`
+        
+        console.log('Resposta stream:', data)
+        console.log('URL HLS final:', hlsUrl)
+
         setStreamUrl(hlsUrl)
 
         setMissatge('Token renovat correctament')

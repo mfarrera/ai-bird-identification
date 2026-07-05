@@ -18,6 +18,7 @@ function Admin() {
         <button onClick={() => navigate('/admin/cameres')}>Veure càmeres</button>
         <button onClick={() => navigate('/admin/crear-comunitat')}>Crear comunitat</button>
         <button onClick={() => navigate('/admin/comunitats')}>Veure comunitats</button>
+        <button onClick={() => navigate('/admin/notificacions-cameres')}>Notificacions de càmeres</button>
       </div>
 
       <button onClick={() => navigate('/principal')}>Tornar</button>
