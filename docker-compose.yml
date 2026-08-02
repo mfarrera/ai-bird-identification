@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: streaming
+      POSTGRES_USER: streaming
+      POSTGRES_PASSWORD: streaming
+    ports:
+      # 5433 al host (no 5432) per evitar xocar amb un Postgres local que
+      # ja tinguis corrent. El backend hi accedeix per xarxa interna de
+      # Docker (postgres:5432), així que aquest mapeig només serveis per si
+      # vols connectar-t'hi manualment amb un client SQL des del host.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streaming -d streaming"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./apps/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://streaming:streaming@postgres:5432/streaming
+      SECRET_KEY: demo-secret-key-canvia-en-produccio
+      # Ha de ser una URL accessible des del NAVEGADOR (que corre al host),
+      # no el nom intern del servei Docker "mediaserver" — per això
+      # localhost:8888 (el port HLS, publicat més avall) i no "http://mediaserver:8888".
+      STREAM_BASE_URL: http://localhost:8888
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/uploads
+
+  mediaserver:
+    build: ./apps/mediaserver
+    depends_on:
+      - backend
+    ports:
+      # 8554 (RTSP) NO es publica a l'host: totes les fonts (simulador Docker
+      # i Jetson real) hi publiquen per la xarxa interna de Docker o la xarxa
+      # local del centre (mediaserver:8554), no des de fora. Només cal
+      # publicar-lo si un dispositiu extern al host ha de fer push directe.
+      - "8888:8888"   # HLS (consum des del frontend)
+
+  edge:
+    build: ./apps/edge
+    depends_on:
+      - backend
+      - mediaserver
+    environment:
+      BACKEND_URL: http://backend:8000
+      CAMERA_ID: "1"
+      PUBLISH_TOKEN: secreto_edge_123
+      # 0 = primera webcam del sistema (cal --device a docker run, veure README);
+      # també pot ser la ruta a un vídeo muntat, p. ex. /app/media/sample.mp4
+      CAMERA_SOURCE: /app/media/sample.mp4
+      MEDIASERVER_RTSP_URL: rtsp://mediaserver:8554
+      YOLO_WEIGHTS: /app/models/yolov8n.pt
+      # Per fer proves fàcilment sense un vídeo real d'ocells: si et mostres
+      # tu mateix movent-te davant la font de vídeo, canvia-ho a "person"
+      # per validar tot el pipeline (moviment -> YOLO -> crop -> API -> BBDD).
+      BIRD_CLASS_NAME: bird
+    volumes:
+      - ./apps/edge/models:/app/models
+      - ./apps/edge/media:/app/media
+      - ./apps/edge/crops:/app/crops
+
+volumes:
+  pgdata:
+  uploads:
