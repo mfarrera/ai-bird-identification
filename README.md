@@ -75,7 +75,7 @@ chmod +x infra/scripts/generate_test_video.sh
 ./infra/scripts/generate_test_video.sh
 ```
 
-Això crea `apps/edge/media/sample.mp4`. Alternativament, posa-hi el teu
+Això crearà `apps/edge/media/sample.mp4`. Alternativament, posa-hi el teu
 propi vídeo amb aquest mateix nom, o munta una webcam real seguint les
 notes del `apps/edge/README.md`.
 
