@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from database import get_connection
@@ -6,11 +6,14 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from urllib.parse import parse_qs
 from email.message import EmailMessage
+from storage import upload_file
+from queues import queue_fase1, queue_fase2
 
 import psycopg
 import os
 import jwt
 import smtplib
+import uuid
 
 import secrets
 
@@ -95,32 +98,6 @@ class CameraUpdate(BaseModel):
 
     # Nova longitud
     longitude: float
-
-class DetectionCreate(BaseModel):
-    # Id de la càmera que ha generat la detecció
-    id_camera: int
-
-    # Data i hora de la detecció
-    detected_at: str
-
-    # Id del tipus de detecció
-    type: int
-
-    # Durada associada a la detecció, si escau
-    duration: int | None = None
-
-    # Estat de la detecció
-    status: str
-
-    # Ruta o URL de la imatge/crop associat
-    url: str | None = None
-
-    # Usuari associat a la detecció, si n'hi ha
-    user_id: int | None = None
-
-class DetectionStatusUpdate(BaseModel):
-    # Nou estat de la detecció
-    status: str
 
 class CommunityCreate(BaseModel):
     # Nombre de la comunitat
@@ -1366,28 +1343,69 @@ def mediamtx_auth(data: MediaMTXAuthRequest):
 
 ############DETECTIONS#########
 
-@app.post("/api/detections/frame")
-def create_detection_frame(detection: DetectionCreate):
+def authenticate_camera(request: Request) -> int:
     """
-    Endpoint: POST /api/detections/frame
+    Valida les credencials de la càmera (capçaleres X-Camera-Id /
+    X-Publish-Token) contra el publish_token guardat a la BBDD.
+    Retorna l'id_camera si són correctes, o llença 401.
+    """
+
+    camera_id_raw = request.headers.get("X-Camera-Id")
+    publish_token = request.headers.get("X-Publish-Token")
+
+    if not camera_id_raw or not publish_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Falten les capçaleres X-Camera-Id / X-Publish-Token"
+        )
+
+    try:
+        camera_id = int(camera_id_raw)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="X-Camera-Id no vàlid")
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT publish_token
+            FROM camera
+            WHERE id = %s
+        """, (camera_id,))
+        row = cur.fetchone()
+
+        if row is None or row[0] != publish_token:
+            raise HTTPException(
+                status_code=401,
+                detail="Credencials de la càmera no vàlides"
+            )
+    finally:
+        cur.close()
+        conn.close()
+
+    return camera_id
+
+
+@app.post("/api/detections_frame")
+def create_detection_frame(
+    request: Request,
+    file: UploadFile = File(...),
+    detected_at: str = Form(...),
+    duration: int | None = Form(None),
+    user_id: int | None = Form(None),
+):
+    """
+    Endpoint: POST /api/detections_frame
 
     Què fa:
-    - Rep una detecció basada en un frame procedent d'un dispositiu Edge.
-    - Comprova que la càmera existeixi.
-    - Comprova que el tipus de detecció existeixi.
-    - Si es proporciona user_id, comprova que l'usuari existeixi.
-    - Desa la detecció a la taula detections.
-
-    Què rep:
-    {
-        "id_camera": 1,
-        "detected_at": "2026-04-20T10:30:00",
-        "type": 1,
-        "duration": null,
-        "status": "waiting",
-        "url": "/detections/frame_001.jpg",
-        "user_id": 1
-    }
+    - Rep la imatge (multipart) d'un frame des d'un dispositiu Edge,
+      que ja ha passat pel Model 1 (YOLO) localment.
+    - Valida les credencials de la càmera (capçaleres X-Camera-Id /
+      X-Publish-Token), mateix mecanisme que /api/mediamtx/auth.
+    - Puja la imatge a MinIO.
+    - Desa la detecció amb status='fase2' (falta identificar l'espècie
+      amb el Model 2/CNN) i type='frame_detection'.
 
     Què retorna si va bé:
     {
@@ -1398,45 +1416,33 @@ def create_detection_frame(detection: DetectionCreate):
     }
     """
 
+    camera_id = authenticate_camera(request)
+
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        # Comprovem que la càmera existeix
-        cur.execute("""
-            SELECT id
-            FROM camera
-            WHERE id = %s
-        """, (detection.id_camera,))
-        camera_row = cur.fetchone()
-
-        if camera_row is None:
-            raise HTTPException(
-                status_code=404,
-                detail="La càmera no existeix"
-            )
-
-        # Comprovem que el tipus de detecció existeix
+        # Tipus de detecció: sempre 'frame_detection' per a aquest endpoint
         cur.execute("""
             SELECT id
             FROM detection_type
-            WHERE id = %s
-        """, (detection.type,))
+            WHERE type = 'frame_detection'
+        """)
         type_row = cur.fetchone()
 
         if type_row is None:
             raise HTTPException(
-                status_code=404,
-                detail="El tipus de detecció no existeix"
+                status_code=500,
+                detail="El tipus de detecció 'frame_detection' no està configurat"
             )
 
         # Si hi ha user_id, comprovem que l'usuari existeix
-        if detection.user_id is not None:
+        if user_id is not None:
             cur.execute("""
                 SELECT id
                 FROM users
                 WHERE id = %s
-            """, (detection.user_id,))
+            """, (user_id,))
             user_row = cur.fetchone()
 
             if user_row is None:
@@ -1445,7 +1451,18 @@ def create_detection_frame(detection: DetectionCreate):
                     detail="L'usuari no existeix"
                 )
 
-        # Inserim la detecció a la base de dades
+        # Pugem la imatge a MinIO
+        extension = os.path.splitext(file.filename or "")[1] or ".jpg"
+        object_name = f"detections/{camera_id}/{uuid.uuid4().hex}{extension}"
+        url = upload_file(
+            file.file,
+            object_name,
+            content_type=file.content_type or "image/jpeg",
+        )
+
+        # Inserim la detecció a la base de dades. status='fase2' perquè
+        # el Model 1 (YOLO) ja s'ha executat a l'Edge — només falta
+        # identificar l'espècie amb el Model 2 (CNN).
         cur.execute("""
             INSERT INTO detections (
                 id_camera,
@@ -1456,20 +1473,23 @@ def create_detection_frame(detection: DetectionCreate):
                 url,
                 user_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, 'fase2', %s, %s)
             RETURNING id, id_camera, detected_at, type, duration, status, url, user_id
         """, (
-            detection.id_camera,
-            detection.detected_at,
-            detection.type,
-            detection.duration,
-            detection.status,
-            detection.url,
-            detection.user_id
+            camera_id,
+            detected_at,
+            type_row[0],
+            duration,
+            url,
+            user_id
         ))
 
         row = cur.fetchone()
         conn.commit()
+
+        # Ja ha passat pel YOLO a l'Edge (status='fase2'): encolem
+        # directament a fase 2 (CNN d'identificació d'espècie).
+        queue_fase2.enqueue("jobs_phase2.process_phase2", row[0])
 
         return {
             "message": "Detecció de frame creada correctament",
@@ -1489,28 +1509,29 @@ def create_detection_frame(detection: DetectionCreate):
         cur.close()
         conn.close()
 
-@app.post("/api/detections/video")
-def create_detection_video(detection: DetectionCreate):
+@app.post("/api/detections_video")
+def create_detection_video(
+    request: Request,
+    file: UploadFile = File(...),
+    detected_at: str = Form(...),
+    duration: int | None = Form(None),
+    user_id: int | None = Form(None),
+    confidence: float | None = Form(None),
+):
     """
-    Endpoint: POST /api/detections/video
+    Endpoint: POST /api/detections_video
 
     Què fa:
-    - Rep una detecció basada en vídeo.
-    - Comprova que la càmera existeixi.
-    - Comprova que el tipus de detecció existeixi.
-    - Si es proporciona user_id, comprova que l'usuari existeixi.
-    - Desa la detecció a la taula detections.
-
-    Què rep:
-    {
-        "id_camera": 1,
-        "detected_at": "2026-04-20T10:45:00",
-        "type": 2,
-        "duration": 8,
-        "status": "waiting",
-        "url": "/detections/video_clip_003.mp4",
-        "user_id": 1
-    }
+    - Rep el vídeo (multipart) des d'un dispositiu Edge.
+    - Valida les credencials de la càmera (capçaleres X-Camera-Id /
+      X-Publish-Token), mateix mecanisme que /api/mediamtx/auth.
+    - Puja el vídeo a MinIO.
+    - Si l'Edge ja ha corregut el seu propi YOLO sobre el vídeo i envia
+      una 'confidence' >= 0.5, ens saltem la fase 1 al Cloud (status
+      queda directament a 'fase2'). Si no envia confidence, o és
+      inferior a 0.5, cal córrer el Model 1 (YOLO) al Cloud (status
+      queda a 'fase1').
+    - Desa la detecció amb type='video_detection'.
 
     Què retorna si va bé:
     {
@@ -1521,45 +1542,33 @@ def create_detection_video(detection: DetectionCreate):
     }
     """
 
+    camera_id = authenticate_camera(request)
+
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        # Comprovem que la càmera existeix
-        cur.execute("""
-            SELECT id
-            FROM camera
-            WHERE id = %s
-        """, (detection.id_camera,))
-        camera_row = cur.fetchone()
-
-        if camera_row is None:
-            raise HTTPException(
-                status_code=404,
-                detail="La càmera no existeix"
-            )
-
-        # Comprovem que el tipus de detecció existeix
+        # Tipus de detecció: sempre 'video_detection' per a aquest endpoint
         cur.execute("""
             SELECT id
             FROM detection_type
-            WHERE id = %s
-        """, (detection.type,))
+            WHERE type = 'video_detection'
+        """)
         type_row = cur.fetchone()
 
         if type_row is None:
             raise HTTPException(
-                status_code=404,
-                detail="El tipus de detecció no existeix"
+                status_code=500,
+                detail="El tipus de detecció 'video_detection' no està configurat"
             )
 
         # Si hi ha user_id, comprovem que l'usuari existeix
-        if detection.user_id is not None:
+        if user_id is not None:
             cur.execute("""
                 SELECT id
                 FROM users
                 WHERE id = %s
-            """, (detection.user_id,))
+            """, (user_id,))
             user_row = cur.fetchone()
 
             if user_row is None:
@@ -1567,6 +1576,24 @@ def create_detection_video(detection: DetectionCreate):
                     status_code=404,
                     detail="L'usuari no existeix"
                 )
+
+        # Decidim la fase segons la confidence del YOLO de l'Edge (si
+        # n'ha corregut cap): prou alta -> ens saltem la fase 1.
+        CONFIDENCE_THRESHOLD = 0.5
+
+        if confidence is not None and confidence >= CONFIDENCE_THRESHOLD:
+            initial_status = "fase2"
+        else:
+            initial_status = "fase1"
+
+        # Pugem el vídeo a MinIO
+        extension = os.path.splitext(file.filename or "")[1] or ".mp4"
+        object_name = f"detections/{camera_id}/{uuid.uuid4().hex}{extension}"
+        url = upload_file(
+            file.file,
+            object_name,
+            content_type=file.content_type or "video/mp4",
+        )
 
         # Inserim la detecció a la base de dades
         cur.execute("""
@@ -1582,17 +1609,26 @@ def create_detection_video(detection: DetectionCreate):
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id, id_camera, detected_at, type, duration, status, url, user_id
         """, (
-            detection.id_camera,
-            detection.detected_at,
-            detection.type,
-            detection.duration,
-            detection.status,
-            detection.url,
-            detection.user_id
+            camera_id,
+            detected_at,
+            type_row[0],
+            duration,
+            initial_status,
+            url,
+            user_id
         ))
 
         row = cur.fetchone()
         conn.commit()
+
+        # Encolem a la cua que toqui segons la fase inicial decidida abans.
+        # NOTA: si va a fase1, process_frame_phase1 encara només sap llegir
+        # imatges (cv2.imread) — falta l'extracció de frame(s) del vídeo
+        # abans de córrer YOLO. Pendent per a vídeos amb confidence baixa.
+        if initial_status == "fase1":
+            queue_fase1.enqueue("jobs_phase1.process_frame_phase1", row[0])
+        else:
+            queue_fase2.enqueue("jobs_phase2.process_phase2", row[0])
 
         return {
             "message": "Detecció de vídeo creada correctament",
@@ -1612,282 +1648,84 @@ def create_detection_video(detection: DetectionCreate):
         cur.close()
         conn.close()
 
-@app.post("/api/detections/next-to-validate")
-def get_next_detection_to_validate():
+
+@app.post("/api/user_upload_frame")
+def user_upload_frame(request: Request, file: UploadFile = File(...)):
     """
-    Endpoint: POST /api/detections/next-to-validate
+    Endpoint: POST /api/user_upload_frame
 
     Què fa:
-    - Busca la primera detecció amb estat 'waiting'
-    - La selecciona en ordre d'entrada a la base de dades (id ascendent)
-    - Canvia el seu estat a 'in_process'
-    - La retorna perquè pugui ser validada
-
-    Què rep:
-    - No rep body
-
-    Què retorna si hi ha una detecció pendent:
-    {
-        "message": "Detecció enviada a validació",
-        "detection": {
-            "id": 3,
-            "id_camera": 1,
-            "detected_at": "2026-04-20 12:00:00",
-            "type": 1,
-            "duration": null,
-            "status": "in_process",
-            "url": "/detections/frame_001.jpg",
-            "user_id": 1
-        }
-    }
-
-    Què retorna si no hi ha deteccions pendents:
-    {
-        "message": "No hi ha deteccions pendents de validar"
-    }
+    - Requereix l'usuari autenticat (Bearer token).
+    - Puja la imatge a MinIO.
+    - Crea una detecció amb status='fase1' (encara no ha passat per cap
+      dels dos models) i type='frame_detection'. No està associada a
+      cap càmera (id_camera=NULL) — l'ha pujat un usuari directament.
     """
+
+    user = get_current_user(request)
 
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        # Busquem la detecció més antiga pendent de validar
         cur.execute("""
             SELECT id
-            FROM detections
-            WHERE status = 'waiting'
-            ORDER BY id ASC
-            LIMIT 1
+            FROM detection_type
+            WHERE type = 'frame_detection'
         """)
-        row = cur.fetchone()
+        type_row = cur.fetchone()
 
-        # Si no n'hi ha cap, retornem un missatge informatiu
-        if row is None:
-            return {
-                "message": "No hi ha deteccions pendents de validar"
-            }
-
-        detection_id = row[0]
-
-        # Actualitzem l'estat a 'in_process' i retornem la detecció actualitzada
-        cur.execute("""
-            UPDATE detections
-            SET status = 'in_process'
-            WHERE id = %s
-            RETURNING id, id_camera, detected_at, type, duration, status, url, user_id
-        """, (detection_id,))
-
-        updated_row = cur.fetchone()
-        conn.commit()
-
-        return {
-            "message": "Detecció enviada a validació",
-            "detection": {
-                "id": updated_row[0],
-                "id_camera": updated_row[1],
-                "detected_at": str(updated_row[2]),
-                "type": updated_row[3],
-                "duration": updated_row[4],
-                "status": updated_row[5],
-                "url": updated_row[6],
-                "user_id": updated_row[7]
-            }
-        }
-
-    finally:
-        cur.close()
-        conn.close()
-
-@app.post("/api/detections/{detection_id}/send-to-validate")
-def send_detection_to_validate(detection_id: int):
-    """
-    Endpoint: POST /api/detections/{detection_id}/send-to-validate
-
-    Què fa:
-    - Busca una detecció concreta pel seu id
-    - Comprova que existeixi
-    - Comprova que estigui en estat 'waiting'
-    - La canvia a 'in_process'
-    - La retorna per tal que pugui ser validada
-
-    Què rep:
-    - detection_id a la URL
-
-    Exemple:
-    POST /api/detections/5/send-to-validate
-
-    Què retorna si va bé:
-    {
-        "message": "Detecció enviada a validació",
-        "detection": {
-            "id": 5,
-            "id_camera": 1,
-            "detected_at": "2026-04-20 12:00:00",
-            "type": 1,
-            "duration": null,
-            "status": "in_process",
-            "url": "/detections/frame_001.jpg",
-            "user_id": 1
-        }
-    }
-
-    Què retorna si va malament:
-    - 404 si la detecció no existeix
-    - 400 si la detecció no està en estat 'waiting'
-    """
-
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        # Busquem la detecció pel seu id
-        cur.execute("""
-            SELECT id, id_camera, detected_at, type, duration, status, url, user_id
-            FROM detections
-            WHERE id = %s
-        """, (detection_id,))
-        row = cur.fetchone()
-
-        # Si no existeix, retornem error 404
-        if row is None:
+        if type_row is None:
             raise HTTPException(
-                status_code=404,
-                detail="La detecció no existeix"
+                status_code=500,
+                detail="El tipus de detecció 'frame_detection' no està configurat"
             )
 
-        # Comprovem que l'estat actual sigui 'waiting'
-        current_status = row[5]
-
-        if current_status != "waiting":
-            raise HTTPException(
-                status_code=400,
-                detail="La detecció no està en estat waiting"
-            )
-
-        # Actualitzem la detecció a 'in_process'
-        cur.execute("""
-            UPDATE detections
-            SET status = 'in_process'
-            WHERE id = %s
-            RETURNING id, id_camera, detected_at, type, duration, status, url, user_id
-        """, (detection_id,))
-        updated_row = cur.fetchone()
-
-        conn.commit()
-
-        return {
-            "message": "Detecció enviada a validació",
-            "detection": {
-                "id": updated_row[0],
-                "id_camera": updated_row[1],
-                "detected_at": str(updated_row[2]),
-                "type": updated_row[3],
-                "duration": updated_row[4],
-                "status": updated_row[5],
-                "url": updated_row[6],
-                "user_id": updated_row[7]
-            }
-        }
-
-    finally:
-        cur.close()
-        conn.close()
-
-@app.put("/api/detections/{detection_id}/status")
-def update_detection_status(detection_id: int, data: DetectionStatusUpdate):
-    """
-    Endpoint: PUT /api/detections/{detection_id}/status
-
-    Què fa:
-    - Busca una detecció pel seu id
-    - Comprova que existeixi
-    - Comprova que el nou estat sigui un dels 4 permesos
-    - Actualitza l'estat de la detecció
-    - Retorna la detecció actualitzada
-
-    Estats permesos:
-    - waiting
-    - in_process
-    - validated
-    - not_validated
-
-    Què rep:
-    - detection_id a la URL
-    - body JSON:
-      {
-          "status": "validated"
-      }
-
-    Què retorna si va bé:
-    {
-        "message": "Estat de la detecció actualitzat correctament",
-        "detection": {
-            "id": 5,
-            "id_camera": 1,
-            "detected_at": "2026-04-20 12:00:00",
-            "type": 1,
-            "duration": null,
-            "status": "validated",
-            "url": "/detections/frame_001.jpg",
-            "user_id": 1
-        }
-    }
-
-    Què retorna si va malament:
-    - 404 si la detecció no existeix
-    - 400 si l'estat no és vàlid
-    """
-
-    # Llista d'estats permesos
-    allowed_statuses = ["waiting", "in_process", "validated", "not_validated"]
-
-    # Comprovem que l'estat rebut sigui vàlid
-    if data.status not in allowed_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail="L'estat no és vàlid"
+        extension = os.path.splitext(file.filename or "")[1] or ".jpg"
+        object_name = f"user_uploads/{user['user_id']}/{uuid.uuid4().hex}{extension}"
+        url = upload_file(
+            file.file,
+            object_name,
+            content_type=file.content_type or "image/jpeg",
         )
 
-    conn = get_connection()
-    cur = conn.cursor()
-
-    try:
-        # Comprovem que la detecció existeix
         cur.execute("""
-            SELECT id
-            FROM detections
-            WHERE id = %s
-        """, (detection_id,))
-        row = cur.fetchone()
-
-        if row is None:
-            raise HTTPException(
-                status_code=404,
-                detail="La detecció no existeix"
+            INSERT INTO detections (
+                id_camera,
+                detected_at,
+                type,
+                duration,
+                status,
+                url,
+                user_id
             )
-
-        # Actualitzem l'estat de la detecció
-        cur.execute("""
-            UPDATE detections
-            SET status = %s
-            WHERE id = %s
+            VALUES (NULL, %s, %s, NULL, 'fase1', %s, %s)
             RETURNING id, id_camera, detected_at, type, duration, status, url, user_id
-        """, (data.status, detection_id))
+        """, (
+            datetime.now(timezone.utc),
+            type_row[0],
+            url,
+            user["user_id"]
+        ))
 
-        updated_row = cur.fetchone()
+        row = cur.fetchone()
         conn.commit()
 
+        # Pujada directa d'un usuari: encara no ha passat per cap model,
+        # comença sempre a fase 1 (YOLO).
+        queue_fase1.enqueue("jobs_phase1.process_frame_phase1", row[0])
+
         return {
-            "message": "Estat de la detecció actualitzat correctament",
+            "message": "Imatge pujada i detecció creada correctament",
             "detection": {
-                "id": updated_row[0],
-                "id_camera": updated_row[1],
-                "detected_at": str(updated_row[2]),
-                "type": updated_row[3],
-                "duration": updated_row[4],
-                "status": updated_row[5],
-                "url": updated_row[6],
-                "user_id": updated_row[7]
+                "id": row[0],
+                "id_camera": row[1],
+                "detected_at": str(row[2]),
+                "type": row[3],
+                "duration": row[4],
+                "status": row[5],
+                "url": row[6],
+                "user_id": row[7]
             }
         }
 
@@ -1895,6 +1733,88 @@ def update_detection_status(detection_id: int, data: DetectionStatusUpdate):
         cur.close()
         conn.close()
 
+
+@app.post("/api/user_upload_video")
+def user_upload_video(request: Request, file: UploadFile = File(...)):
+    """
+    Endpoint: POST /api/user_upload_video
+
+    Anàleg a /api/user_upload_frame però per a vídeo
+    (type='video_detection').
+    """
+
+    user = get_current_user(request)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT id
+            FROM detection_type
+            WHERE type = 'video_detection'
+        """)
+        type_row = cur.fetchone()
+
+        if type_row is None:
+            raise HTTPException(
+                status_code=500,
+                detail="El tipus de detecció 'video_detection' no està configurat"
+            )
+
+        extension = os.path.splitext(file.filename or "")[1] or ".mp4"
+        object_name = f"user_uploads/{user['user_id']}/{uuid.uuid4().hex}{extension}"
+        url = upload_file(
+            file.file,
+            object_name,
+            content_type=file.content_type or "video/mp4",
+        )
+
+        cur.execute("""
+            INSERT INTO detections (
+                id_camera,
+                detected_at,
+                type,
+                duration,
+                status,
+                url,
+                user_id
+            )
+            VALUES (NULL, %s, %s, NULL, 'fase1', %s, %s)
+            RETURNING id, id_camera, detected_at, type, duration, status, url, user_id
+        """, (
+            datetime.now(timezone.utc),
+            type_row[0],
+            url,
+            user["user_id"]
+        ))
+
+        row = cur.fetchone()
+        conn.commit()
+
+        # Pujada directa d'un usuari: comença sempre a fase 1 (YOLO).
+        # NOTA: process_frame_phase1 només sap llegir imatges (cv2.imread);
+        # encara falta l'extracció de frame(s) d'un vídeo abans de córrer
+        # YOLO. De moment el job fallarà per a vídeos reals — pendent.
+        queue_fase1.enqueue("jobs_phase1.process_frame_phase1", row[0])
+
+        return {
+            "message": "Vídeo pujat i detecció creada correctament",
+            "detection": {
+                "id": row[0],
+                "id_camera": row[1],
+                "detected_at": str(row[2]),
+                "type": row[3],
+                "duration": row[4],
+                "status": row[5],
+                "url": row[6],
+                "user_id": row[7]
+            }
+        }
+
+    finally:
+        cur.close()
+        conn.close()
 
 
 ###############################COMUNITATS#######################

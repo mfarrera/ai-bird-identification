@@ -15,6 +15,7 @@ import CrearComunitat from './pages/CrearComunitat'
 import LlistarComunitats from './pages/LlistarComunitats'
 import GestionarComunitat from './pages/GestionarComunitat'
 import NotificacionsCameres from './pages/NotificacionsCameres'
+import PujarImatge from './pages/PujarImatge'
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
         <Route path="/" element={<IniciSessio />} />
         <Route path="/crear-usuari" element={<CrearUsuari />} />
         <Route path="/principal" element={<Principal />} />
+        <Route path="/pujar-imatge" element={<PujarImatge />} />
 
         <Route path="/admin" element={<Admin />} />
         <Route path="/admin/crear-usuari" element={<CrearUsuari />} />

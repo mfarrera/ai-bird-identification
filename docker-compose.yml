@@ -1,46 +1,19 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: streaming
-      POSTGRES_USER: streaming
-      POSTGRES_PASSWORD: streaming
-    ports:
-      # 5433 al host (no 5432) per evitar xocar amb un Postgres local que
-      # ja tinguis corrent. El backend hi accedeix per xarxa interna de
-      # Docker (postgres:5432), així que aquest mapeig només serveis per si
-      # vols connectar-t'hi manualment amb un client SQL des del host.
-      - "5433:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U streaming -d streaming"]
-      interval: 3s
-      timeout: 3s
-      retries: 10
-
   backend:
     build: ./apps/backend
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://streaming:streaming@postgres:5432/streaming
-      SECRET_KEY: demo-secret-key-canvia-en-produccio
-      # Ha de ser una URL accessible des del NAVEGADOR (que corre al host),
-      # no el nom intern del servei Docker "mediaserver" — per això
-      # localhost:8888 (el port HLS, publicat més avall) i no "http://mediaserver:8888".
-      STREAM_BASE_URL: http://localhost:8888
-    ports:
-      - "8000:8000"
-    volumes:
-      - uploads:/app/uploads
+    # Xarxa host: el contenidor comparteix la xarxa de la màquina, així que
+    # "localhost:5432" de dins del contenidor és el localhost real del host.
+    # Fa servir el .env tal qual (ja apunta al teu Postgres natiu amb
+    # les teves dades) — no calen ports: ni environment: aquí.
+    network_mode: host
 
   mediaserver:
     build: ./apps/mediaserver
-    depends_on:
-      - backend
+    extra_hosts:
+      # El backend ja no corre dins de Docker: parla directament amb el teu
+      # Postgres natiu del host. Aquest mapeig permet que el contenidor
+      # arribi al backend, que escolta a localhost:8000 del host.
+      - "host.docker.internal:host-gateway"
     ports:
       # 8554 (RTSP) NO es publica a l'host: totes les fonts (simulador Docker
       # i Jetson real) hi publiquen per la xarxa interna de Docker o la xarxa
@@ -51,10 +24,13 @@ services:
   edge:
     build: ./apps/edge
     depends_on:
-      - backend
       - mediaserver
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      BACKEND_URL: http://backend:8000
+      # El backend corre natiu al host (fora de Docker), no com a servei
+      # d'aquest compose.
+      BACKEND_URL: http://host.docker.internal:8000
       CAMERA_ID: "1"
       PUBLISH_TOKEN: secreto_edge_123
       # 0 = primera webcam del sistema (cal --device a docker run, veure README);
@@ -71,6 +47,81 @@ services:
       - ./apps/edge/media:/app/media
       - ./apps/edge/crops:/app/crops
 
+  frontend:
+    build: ./apps/frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      # Muntem el codi font perquè el hot-reload de Vite funcioni sense
+      # haver de reconstruir la imatge a cada canvi.
+      - ./apps/frontend:/app
+      - /app/node_modules
+    environment:
+      # Alguns entorns (WSL/Docker) no detecten canvis de fitxers sense
+      # polling actiu.
+      CHOKIDAR_USEPOLLING: "true"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"   # API S3 (backend natiu i futurs workers)
+      - "9001:9001"   # Consola web: http://localhost:9001
+    volumes:
+      - miniodata:/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      # Publicat perquè el backend (network_mode: host) hi arribi per
+      # localhost:6379. Els workers, dins la xarxa normal de Docker, hi
+      # arriben directament per "redis:6379" (nom del servei).
+      - "6379:6379"
+
+  worker-phase1:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile.worker-phase1
+    depends_on:
+      - redis
+    env_file:
+      # Mateix .env que el backend (DATABASE_URL, credencials MinIO...).
+      - ./apps/backend/.env
+    extra_hosts:
+      # Aquest worker NO fa servir network_mode: host, així que "localhost"
+      # de dins seu no és el host — cal aquest mapeig per arribar al teu
+      # Postgres natiu, igual que ja fa mediaserver/edge.
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Sobreescriuen el que hi hagi a .env (pensat per al backend, que sí
+      # és host network): noms de servei de Docker + l'amfitrió del Postgres
+      # natiu. Les credencials del DATABASE_URL de l'.env NO es toquen aquí
+      # (veure database.py) — així funciona igual per a qualsevol clon del
+      # repo, tingui les credencials de Postgres que tingui.
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      DB_HOST_OVERRIDE: host.docker.internal
+    volumes:
+      # Mateixos pesos de YOLO que ja fa servir l'Edge.
+      - ./apps/edge/models:/app/models
+
+  worker-phase2:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile.worker-phase2
+    depends_on:
+      - redis
+    env_file:
+      - ./apps/backend/.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      DB_HOST_OVERRIDE: host.docker.internal
+
 volumes:
-  pgdata:
-  uploads:
+  miniodata:

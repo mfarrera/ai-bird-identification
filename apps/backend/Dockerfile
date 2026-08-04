@@ -12,4 +12,6 @@ RUN mkdir -p uploads/detections
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Primer apliquem les migracions pendents (ràpid si no n'hi ha cap de
+# nova) i només si acaben bé arrenquem el servidor.
+CMD python run_migrations.py && uvicorn main:app --host 0.0.0.0 --port 8000

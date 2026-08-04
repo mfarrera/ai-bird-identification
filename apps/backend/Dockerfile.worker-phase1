@@ -1,0 +1,41 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# libgl1/libglib2.0-0: requerides per opencv en entorns headless
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-worker-phase1.txt ./
+
+# torch/torchvision CPU-only, ABANS de la resta: aquest worker no té GPU
+# ni CUDA instal·lat (imatge python:3.11-slim), així que la build normal
+# de pip (amb CUDA, >1.5GB) només gasta RAM/disc de franc durant el build
+# — habitualment la causa real de talls per falta de memòria a WSL2/màquines
+# amb poca RAM. En fixar versió + --index-url del repositori CPU oficial
+# de PyTorch, quan s'instal·li ultralytics després ja troba torch/torchvision
+# satisfets i no els reinstal·la. Funciona igual per a qualsevol màquina/
+# entorn, no és res específic d'aquest host.
+RUN pip install --no-cache-dir \
+        torch==2.5.1 torchvision==0.20.1 \
+        --index-url https://download.pytorch.org/whl/cpu
+
+# --extra-index-url (no --index-url) perquè aquí SÍ calen paquets normals
+# de PyPI (fastapi, opencv...) a més de torch/torchvision. Com que ara
+# requirements-worker-phase1.txt també fixa torch==2.5.1/torchvision==0.20.1
+# exactes, pip els troba ja satisfets (instal·lats al pas anterior) i no
+# torna a baixar-los — abans, com que aquí no hi havia cap índex ni versió
+# fixada, ultralytics arrossegava una versió de torch diferent (amb CUDA)
+# des del PyPI normal.
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-worker-phase1.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu
+
+COPY . .
+
+# Els pesos de YOLO es munten com a volum (mateix fitxer que ja fa
+# servir apps/edge), no es copien a la imatge.
+VOLUME ["/app/models"]
+
+CMD ["rq", "worker", "--url", "redis://redis:6379/0", "fase1"]

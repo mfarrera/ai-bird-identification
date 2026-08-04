@@ -1,0 +1,14 @@
+# Dependències extra NOMÉS per al worker de fase 1 (YOLO). El backend
+# (API) i el worker de fase 2 (stub) no les necessiten, per això van
+# en un fitxer a part i no dins de requirements.txt.
+#
+# torch/torchvision fixats aquí TAMBÉ (a més del pip install previ al
+# Dockerfile): així, quan aquest fitxer s'instal·la junt amb requirements.txt,
+# el resolver de pip veu la versió exacta com a restricció i reutilitza la
+# que ja hi ha instal·lada (CPU-only) en comptes de deixar que ultralytics
+# arrossegui una versió diferent (amb CUDA) des del PyPI normal.
+torch==2.5.1
+torchvision==0.20.1
+opencv-python-headless==4.10.0.84
+ultralytics==8.3.40
+numpy==2.1.3

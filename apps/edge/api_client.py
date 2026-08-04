@@ -5,17 +5,15 @@ class BackendClient:
     """
     Encapsula la comunicació amb el backend Cloud.
 
-    L'autenticació dels endpoints de deteccions es fa amb el mateix
-    publish_token que la càmera ja fa servir per publicar el stream a
-    MediaMTX (/api/mediamtx/auth), enviat via les capçaleres
-    X-Camera-Id / X-Publish-Token.
+    L'autenticació es fa amb el mateix publish_token que la càmera ja
+    fa servir per publicar el stream a MediaMTX (/api/mediamtx/auth),
+    enviat via les capçaleres X-Camera-Id / X-Publish-Token.
     """
 
-    def __init__(self, base_url: str, camera_id: int, publish_token: str, detection_type_id: int = 1):
+    def __init__(self, base_url: str, camera_id: int, publish_token: str):
         self.base_url = base_url.rstrip("/")
         self.camera_id = camera_id
         self.publish_token = publish_token
-        self.detection_type_id = detection_type_id
 
     def _auth_headers(self) -> dict:
         return {
@@ -23,32 +21,50 @@ class BackendClient:
             "X-Publish-Token": self.publish_token,
         }
 
-    def upload_image(self, filepath: str) -> str:
-        with open(filepath, "rb") as f:
+    def send_frame_detection(self, image_path: str, detected_at: str) -> dict:
+        """
+        Una sola crida multipart a /api/detections_frame: la imatge i
+        les dades de la detecció van juntes. El backend s'encarrega de
+        pujar-la a MinIO i crear la fila a la BBDD.
+        """
+
+        with open(image_path, "rb") as f:
             response = requests.post(
-                f"{self.base_url}/api/detections/upload-image",
-                files={"file": f},
+                f"{self.base_url}/api/detections_frame",
                 headers=self._auth_headers(),
+                files={"file": f},
+                data={"detected_at": detected_at},
                 timeout=10,
             )
         response.raise_for_status()
-        return response.json()["url"]
+        return response.json()
 
-    def send_frame_detection(self, image_path: str, detected_at: str) -> dict:
-        image_url = self.upload_image(image_path)
+    def send_video_detection(
+        self,
+        video_path: str,
+        detected_at: str,
+        duration: int | None = None,
+        confidence: float | None = None,
+    ) -> dict:
+        """
+        Anàleg a send_frame_detection però per a vídeo. 'confidence' és
+        opcional: si l'Edge ja ha corregut YOLO sobre el vídeo i està
+        prou segur, el backend es pot estalviar repetir la fase 1.
+        """
 
-        payload = {
-            "id_camera": self.camera_id,
-            "detected_at": detected_at,
-            "type": self.detection_type_id,
-            "status": "waiting",
-            "url": image_url,
-        }
+        data = {"detected_at": detected_at}
+        if duration is not None:
+            data["duration"] = duration
+        if confidence is not None:
+            data["confidence"] = confidence
 
-        response = requests.post(
-            f"{self.base_url}/api/detections/frame",
-            json=payload,
-            timeout=10,
-        )
+        with open(video_path, "rb") as f:
+            response = requests.post(
+                f"{self.base_url}/api/detections_video",
+                headers=self._auth_headers(),
+                files={"file": f},
+                data=data,
+                timeout=30,
+            )
         response.raise_for_status()
         return response.json()
