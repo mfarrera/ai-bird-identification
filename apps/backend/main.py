@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from urllib.parse import parse_qs
 from email.message import EmailMessage
-from storage import upload_file
+from storage import upload_file, get_url
 from queues import queue_fase1, queue_fase2
 
 import psycopg
@@ -1387,6 +1387,22 @@ def authenticate_camera(request: Request) -> int:
     return camera_id
 
 
+def _validate_upload_kind(file: UploadFile, expected_prefix: str, kind_label: str):
+    """
+    Comprova que el content_type del fitxer pujat comença pel prefix
+    esperat ('image/' o 'video/'). No és una validació infal·lible (el
+    content_type l'envia el client, es podria falsejar), però evita
+    l'error més habitual: pujar un vídeo a un endpoint pensat per a
+    imatges, o al revés.
+    """
+    content_type = file.content_type or ""
+    if not content_type.startswith(expected_prefix):
+        raise HTTPException(
+            status_code=400,
+            detail=f"S'esperava un fitxer de tipus {kind_label} (content-type rebut: '{content_type}')"
+        )
+
+
 @app.post("/api/detections_frame")
 def create_detection_frame(
     request: Request,
@@ -1417,6 +1433,7 @@ def create_detection_frame(
     """
 
     camera_id = authenticate_camera(request)
+    _validate_upload_kind(file, "image/", "imatge")
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1500,7 +1517,7 @@ def create_detection_frame(
                 "type": row[3],
                 "duration": row[4],
                 "status": row[5],
-                "url": row[6],
+                "url": get_url(row[6]),
                 "user_id": row[7]
             }
         }
@@ -1543,6 +1560,7 @@ def create_detection_video(
     """
 
     camera_id = authenticate_camera(request)
+    _validate_upload_kind(file, "video/", "vídeo")
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1622,9 +1640,6 @@ def create_detection_video(
         conn.commit()
 
         # Encolem a la cua que toqui segons la fase inicial decidida abans.
-        # NOTA: si va a fase1, process_frame_phase1 encara només sap llegir
-        # imatges (cv2.imread) — falta l'extracció de frame(s) del vídeo
-        # abans de córrer YOLO. Pendent per a vídeos amb confidence baixa.
         if initial_status == "fase1":
             queue_fase1.enqueue("jobs_phase1.process_frame_phase1", row[0])
         else:
@@ -1639,7 +1654,7 @@ def create_detection_video(
                 "type": row[3],
                 "duration": row[4],
                 "status": row[5],
-                "url": row[6],
+                "url": get_url(row[6]),
                 "user_id": row[7]
             }
         }
@@ -1663,6 +1678,7 @@ def user_upload_frame(request: Request, file: UploadFile = File(...)):
     """
 
     user = get_current_user(request)
+    _validate_upload_kind(file, "image/", "imatge")
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1724,7 +1740,7 @@ def user_upload_frame(request: Request, file: UploadFile = File(...)):
                 "type": row[3],
                 "duration": row[4],
                 "status": row[5],
-                "url": row[6],
+                "url": get_url(row[6]),
                 "user_id": row[7]
             }
         }
@@ -1744,6 +1760,7 @@ def user_upload_video(request: Request, file: UploadFile = File(...)):
     """
 
     user = get_current_user(request)
+    _validate_upload_kind(file, "video/", "vídeo")
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1793,9 +1810,6 @@ def user_upload_video(request: Request, file: UploadFile = File(...)):
         conn.commit()
 
         # Pujada directa d'un usuari: comença sempre a fase 1 (YOLO).
-        # NOTA: process_frame_phase1 només sap llegir imatges (cv2.imread);
-        # encara falta l'extracció de frame(s) d'un vídeo abans de córrer
-        # YOLO. De moment el job fallarà per a vídeos reals — pendent.
         queue_fase1.enqueue("jobs_phase1.process_frame_phase1", row[0])
 
         return {
@@ -1807,7 +1821,7 @@ def user_upload_video(request: Request, file: UploadFile = File(...)):
                 "type": row[3],
                 "duration": row[4],
                 "status": row[5],
-                "url": row[6],
+                "url": get_url(row[6]),
                 "user_id": row[7]
             }
         }

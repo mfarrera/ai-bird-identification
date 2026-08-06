@@ -27,9 +27,21 @@ def _ensure_bucket():
 
 def upload_file(file_obj, object_name: str, content_type: str = "application/octet-stream") -> str:
     """
-    Puja un fitxer (imatge o vídeo) al bucket de MinIO i retorna una URL
-    temporal per llegir-lo (com els tokens de stream/publicació que ja
-    fa servir el projecte, no un bucket públic).
+    Puja un fitxer (imatge o vídeo) al bucket de MinIO i retorna el NOM
+    DE L'OBJECTE (no una URL).
+
+    Abans retornava directament una URL presignada, però la signatura
+    d'una URL presignada va lligada a l'host amb què es genera
+    (X-Amz-SignedHeaders=host) — una URL generada pel backend amb
+    MINIO_ENDPOINT=localhost:9000 no és vàlida per a un worker que hi
+    accedeix per minio:9000, encara que la connexió TCP fos possible.
+    A més, una URL presignada caduca als 60 minuts, així que guardar-la
+    "cuinada" a la BBDD tampoc serviria si la detecció triga a
+    processar-se.
+
+    Per això cada component ha de cridar get_url(object_name) pel seu
+    compte, en el moment que la necessiti, amb el seu propi
+    MINIO_ENDPOINT — no reutilitzar una URL generada per un altre procés.
     """
 
     _ensure_bucket()
@@ -46,7 +58,7 @@ def upload_file(file_obj, object_name: str, content_type: str = "application/oct
         content_type=content_type,
     )
 
-    return get_url(object_name)
+    return object_name
 
 
 def get_url(object_name: str, expires_minutes: int = 60) -> str:

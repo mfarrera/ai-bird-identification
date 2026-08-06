@@ -52,6 +52,44 @@ sudo -u postgres psql -c "CREATE DATABASE tfgdb OWNER usuari;"
 No cal crear cap taula a mà — el backend aplica l'esquema
 automàticament en arrencar (veure `apps/backend/migrations/`).
 
+### Permet que els workers hi accedeixin
+
+El teu Postgres, per defecte, només accepta connexions des de
+`localhost`. Això li val al **backend** (que hi arriba amb
+`network_mode: host`, és com si fos el propi host), però NO als
+**workers** (`worker-phase1`, `worker-phase2`), que corren a la xarxa
+normal de Docker i hi arriben per `host.docker.internal` — veure
+[Com arriben els workers a la teva BBDD](#com-arriben-els-workers-a-la-teva-bbdd-db_host_override).
+Cal obrir-li aquest accés un sol cop:
+
+Localitza els fitxers de configuració (la ruta exacta depèn de la
+versió de Postgres instal·lada):
+```bash
+sudo -u postgres psql -c "SHOW config_file;"
+sudo -u postgres psql -c "SHOW hba_file;"
+```
+
+A `postgresql.conf`, assegura't que:
+```
+listen_addresses = '*'
+```
+
+A `pg_hba.conf`, afegeix aquesta línia al final (cobreix qualsevol
+xarxa que pugui crear Docker, no només la d'ara mateix):
+```
+host    all    all    172.16.0.0/12    md5
+```
+
+Reinicia Postgres:
+```bash
+sudo systemctl restart postgresql
+```
+
+Si tens `ufw` actiu (`sudo ufw status`), permet també el port:
+```bash
+sudo ufw allow from 172.16.0.0/12 to any port 5432
+```
+
 ## 2. Configuració del backend
 
 ```bash
