@@ -11,17 +11,16 @@ Edge (YOLO local) ──RTSP──> Mediaserver (MediaMTX) ──HLS──> Fron
        │                           │
        │ push detecció+imatge      │ auth webhook
        ▼                           ▼
-    Backend (FastAPI) ───────── Postgres (natiu, fora de Docker)
+    Backend (FastAPI) ───────── Postgres (Docker, dades persistents)
        │
        ▼
      MinIO (imatges/vídeos de deteccions)
 ```
 
 Serveis a `docker-compose.yml`: **backend**, **mediaserver**, **edge**,
-**minio**, **frontend**, **redis**, **worker-phase1**, **worker-phase2**.
-El **Postgres NO corre a Docker** — és el teu Postgres natiu del host,
-amb les teves dades reals; el backend hi accedeix amb `network_mode:
-host`.
+**minio**, **frontend**, **redis**, **worker-phase1**, **worker-phase2**,
+**postgres**. Totes les dades (Postgres i MinIO) persisteixen en volums
+de Docker entre reinicis.
 
 El pipeline de detecció és asíncron amb dues cues de Redis (RQ):
 `fase1` (YOLO — troba l'ocell i el retalla) i `fase2` (CNN —
@@ -34,61 +33,22 @@ poden escalar-se de forma independent.
 - Docker Engine + el plugin de Compose v2 (`docker compose version` ha
   de funcionar; si dona "unknown command", instal·la'l manualment —
   veure [Notes](#notes--problemes-habituals))
-- Postgres instal·lat i corrent al host (fora de Docker)
 - `ffmpeg` (per generar un vídeo de prova si no tens material real)
 - Python 3.10+ i `pip` (per al venv del backend, usat només per
   `pip install` — el backend en si corre dins de Docker)
 
 ## 1. Base de dades
 
-Crea l'usuari i la base de dades al teu Postgres natiu (substitueix
-`usuari`/`contrasenya` pels que vulguis):
+Postgres corre com un servei més de `docker-compose.yml` (`postgres`),
+amb dades persistents en un volum de Docker (`postgres_data`) — no cal
+instal·lar-lo ni configurar-lo a mà. La primera vegada que aixequis el
+projecte, es crea buit i el backend hi aplica l'esquema automàticament
+(veure `apps/backend/migrations/`).
 
-```bash
-sudo -u postgres psql -c "CREATE USER usuari WITH PASSWORD 'contrasenya';"
-sudo -u postgres psql -c "CREATE DATABASE tfgdb OWNER usuari;"
-```
-
-No cal crear cap taula a mà — el backend aplica l'esquema
-automàticament en arrencar (veure `apps/backend/migrations/`).
-
-### Permet que els workers hi accedeixin
-
-El teu Postgres, per defecte, només accepta connexions des de
-`localhost`. Això li val al **backend** (que hi arriba amb
-`network_mode: host`, és com si fos el propi host), però NO als
-**workers** (`worker-phase1`, `worker-phase2`), que corren a la xarxa
-normal de Docker i hi arriben per `host.docker.internal` — veure
-[Com arriben els workers a la teva BBDD](#com-arriben-els-workers-a-la-teva-bbdd-db_host_override).
-Cal obrir-li aquest accés un sol cop:
-
-Localitza els fitxers de configuració (la ruta exacta depèn de la
-versió de Postgres instal·lada):
-```bash
-sudo -u postgres psql -c "SHOW config_file;"
-sudo -u postgres psql -c "SHOW hba_file;"
-```
-
-A `postgresql.conf`, assegura't que:
-```
-listen_addresses = '*'
-```
-
-A `pg_hba.conf`, afegeix aquesta línia al final (cobreix qualsevol
-xarxa que pugui crear Docker, no només la d'ara mateix):
-```
-host    all    all    172.16.0.0/12    md5
-```
-
-Reinicia Postgres:
-```bash
-sudo systemctl restart postgresql
-```
-
-Si tens `ufw` actiu (`sudo ufw status`), permet també el port:
-```bash
-sudo ufw allow from 172.16.0.0/12 to any port 5432
-```
+Credencials per defecte (definides a `docker-compose.yml`, pensades
+només per a desenvolupament local — canvia-les si vas a exposar això
+en cap altre entorn): usuari `tfg`, contrasenya `tfg_dev_password`,
+base de dades `tfgdb`.
 
 ## 2. Configuració del backend
 
@@ -97,10 +57,11 @@ cd apps/backend
 cp .env.example .env
 ```
 
-Edita `.env` amb el `DATABASE_URL` (usuari/contrasenya/BBDD que has
-creat al pas 1) i la resta de valors (com a mínim `SECRET_KEY`; el SMTP
-només cal si vols que funcionin els correus d'acceptació/denegació de
-càmeres).
+Edita `.env` amb el `DATABASE_URL` (per defecte
+`postgresql://tfg:tfg_dev_password@localhost:5432/tfgdb`, si no has
+canviat les credencials del pas 1) i la resta de valors (com a mínim
+`SECRET_KEY`; el SMTP només cal si vols que funcionin els correus
+d'acceptació/denegació de càmeres).
 
 ## 3. Vídeo de prova per a l'Edge
 
@@ -142,6 +103,7 @@ de l'esquema (`[migrations] Aplicant 0001_initial_schema.sql...`).
 | Backend (Swagger) | http://localhost:8000/docs |
 | Mediaserver (HLS) | http://localhost:8888 |
 | MinIO (consola web) | http://localhost:9001 (usuari `minioadmin` / contrasenya `minioadmin123`) |
+| Postgres | `localhost:5432` (usuari `tfg` / contrasenya `tfg_dev_password` / BBDD `tfgdb`) |
 
 ## 6. Aturar-ho
 
@@ -149,14 +111,15 @@ de l'esquema (`[migrations] Aplicant 0001_initial_schema.sql...`).
 docker compose down
 ```
 
-(el Postgres és fora de Docker, així que les teves dades no es toquen
-amb aquest ni cap altre `docker compose down`)
+(les dades de Postgres i MinIO viuen en volums de Docker — sobreviuen
+a `docker compose down`. Si vols esborrar-les del tot, `docker compose
+down -v`, però ves amb compte: això esborra les dades reals.)
 
 ## Estructura del projecte
 
 ```
 apps/
-  backend/      FastAPI + psycopg, connecta al Postgres natiu del host
+  backend/      FastAPI + psycopg, connecta a Postgres (Docker)
   frontend/     React + Vite
   mediaserver/  MediaMTX (RTSP -> HLS), autenticació delegada al backend
   edge/         Captura + YOLO local + publicació RTSP + enviament de deteccions
@@ -173,9 +136,10 @@ El **backend** corre amb `network_mode: host`, així que dins seu
 Els **workers** (`worker-phase1`, `worker-phase2`) **no** fan servir
 `network_mode: host` — corren a la xarxa normal de Docker, aïllats. Si
 hi intentessin connectar a `localhost:5432`, apuntarien al propi
-contenidor del worker, no al teu Postgres. Per això necessiten
-`host.docker.internal` (el nom que Docker resol a la IP del host) en
-comptes de `localhost`.
+contenidor del worker, no a Postgres (encara que Postgres també corri
+en un contenidor: cada contenidor és una xarxa aïllada, no es veuen
+entre ells per `localhost`). Per això necessiten `host.docker.internal`
+(el nom que Docker resol a la IP del host) en comptes de `localhost`.
 
 En lloc d'escriure una `DATABASE_URL` diferent (amb usuari/contrasenya
 hardcodejats) al `docker-compose.yml` — que es puja a git i trencaria

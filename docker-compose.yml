@@ -73,6 +73,26 @@ services:
     volumes:
       - miniodata:/data
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tfg
+      POSTGRES_PASSWORD: tfg_dev_password
+      POSTGRES_DB: tfgdb
+    ports:
+      # Publicat perquè el backend (network_mode: host) hi arribi per
+      # localhost:5432, igual que ja fa amb MinIO/Redis. Els workers hi
+      # arriben per host.docker.internal (DB_HOST_OVERRIDE), sense canviar
+      # res del que ja existeix.
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tfg -d tfgdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7-alpine
     ports:
@@ -125,3 +145,4 @@ services:
 
 volumes:
   miniodata:
+  postgres_data:
