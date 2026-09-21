@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Layout from '../Layout'
 
 const API_URL = 'http://127.0.0.1:8000'
 
@@ -30,19 +31,33 @@ function EnviarDeteccioValidar() {
   }
 
   return (
-    <div style={{ padding: '30px', textAlign: 'center' }}>
-      <h1>Enviar detecció a validar</h1>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {missatge && <p style={{ color: 'green' }}>{missatge}</p>}
+    <Layout
+      title="Enviar detecció a validar"
+      subtitle="Força l'enviament d'una detecció a la fase de validació."
+    >
+      <div className="panel">
+        {error && <div className="alert alert-error">{error}</div>}
+        {missatge && <div className="alert alert-success">{missatge}</div>}
 
-      <form onSubmit={handleSubmit}>
-        <input type="number" placeholder="ID detecció" value={detectionId} onChange={(e) => setDetectionId(e.target.value)} /><br /><br />
-        <button type="submit">Enviar</button>
-      </form>
+        <form onSubmit={handleSubmit}>
+          <div className="field">
+            <label>ID detecció</label>
+            <input
+              className="input"
+              type="number"
+              value={detectionId}
+              onChange={(e) => setDetectionId(e.target.value)}
+            />
+          </div>
 
-      <br />
-      <button onClick={() => navigate('/admin')}>Tornar</button>
-    </div>
+          <button className="btn btn-primary" type="submit">Enviar</button>
+        </form>
+
+        <div className="btn-row">
+          <button className="btn" onClick={() => navigate('/admin')}>Tornar</button>
+        </div>
+      </div>
+    </Layout>
   )
 }
 

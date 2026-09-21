@@ -5,7 +5,7 @@ import Layout from '../Layout'
 
 const API_URL = 'http://127.0.0.1:8000'
 
-function VeureStreamAdmin() {
+function VeureStream() {
   const { cameraId } = useParams()
   const navigate = useNavigate()
 
@@ -16,8 +16,6 @@ function VeureStreamAdmin() {
   const [error, setError] = useState('')
   const [missatge, setMissatge] = useState('')
   const [streamUrl, setStreamUrl] = useState('')
-  const [tokenStream, setTokenStream] = useState('')
-  const [expires, setExpires] = useState('')
 
   const obtenirTokenIStream = async () => {
     const tokenSessio = localStorage.getItem('token')
@@ -46,7 +44,6 @@ function VeureStreamAdmin() {
 
     const expiresAt = new Date(expiresIso).getTime()
     const now = Date.now()
-
     const tempsFinsRenovar = expiresAt - now - 60000
     const delay = Math.max(tempsFinsRenovar, 0)
 
@@ -56,12 +53,7 @@ function VeureStreamAdmin() {
         setMissatge('Renovant token del stream...')
 
         const data = await obtenirTokenIStream()
-
-        setTokenStream(data.token)
-        setExpires(data.expires || '')
-
         const hlsUrl = `${data.hls_url}?jwt=${encodeURIComponent(data.token)}`
-
         setStreamUrl(hlsUrl)
         setMissatge('Token renovat correctament')
 
@@ -82,26 +74,14 @@ function VeureStreamAdmin() {
       return
     }
 
-    const usuari = JSON.parse(usuariGuardat)
-
-    if (usuari.role !== 'admin') {
-      navigate('/principal')
-      return
-    }
-
     const carregarStreamInicial = async () => {
       try {
         setError('')
         setMissatge('Demanant token del stream...')
 
         const data = await obtenirTokenIStream()
-
-        setTokenStream(data.token)
-        setExpires(data.expires || '')
-
         const hlsUrl = `${data.hls_url}?jwt=${encodeURIComponent(data.token)}`
         setStreamUrl(hlsUrl)
-
         setMissatge('Token rebut. Carregant stream...')
 
         programarRenovacioToken(data.expires)
@@ -117,7 +97,6 @@ function VeureStreamAdmin() {
       if (refreshTimeoutRef.current) {
         clearTimeout(refreshTimeoutRef.current)
       }
-
       if (hlsRef.current) {
         hlsRef.current.destroy()
         hlsRef.current = null
@@ -165,23 +144,6 @@ function VeureStreamAdmin() {
         {error && <div className="alert alert-error">{error}</div>}
         {missatge && <p className="muted">{missatge}</p>}
 
-        {tokenStream && (
-          <details style={{ marginTop: '12px', marginBottom: '12px' }}>
-            <summary className="muted">Veure token del stream</summary>
-            <textarea
-              className="input wide"
-              value={tokenStream}
-              readOnly
-              rows="5"
-              style={{ marginTop: '10px' }}
-            />
-          </details>
-        )}
-
-        {expires && (
-          <p className="muted"><strong>Caduca a:</strong> {expires}</p>
-        )}
-
         <video
           ref={videoRef}
           controls
@@ -191,11 +153,8 @@ function VeureStreamAdmin() {
         />
 
         <div className="btn-row">
-          <button className="btn" onClick={() => navigate('/admin/cameres')}>
-            Tornar a la llista de càmeres
-          </button>
-          <button className="btn" onClick={() => navigate('/admin')}>
-            Tornar al panell admin
+          <button className="btn" onClick={() => navigate('/principal')}>
+            Tornar al dashboard
           </button>
         </div>
       </div>
@@ -203,4 +162,4 @@ function VeureStreamAdmin() {
   )
 }
 
-export default VeureStreamAdmin
+export default VeureStream

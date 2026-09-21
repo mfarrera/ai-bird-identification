@@ -19,8 +19,8 @@ Edge (YOLO local) ──RTSP──> Mediaserver (MediaMTX) ──HLS──> Fron
 
 Serveis a `docker-compose.yml`: **backend**, **mediaserver**, **edge**,
 **minio**, **frontend**, **redis**, **worker-phase1**, **worker-phase2**,
-**postgres**. Totes les dades (Postgres i MinIO) persisteixen en volums
-de Docker entre reinicis.
+**postgres**, **pgadmin**. Totes les dades (Postgres i MinIO) persisteixen
+en volums de Docker entre reinicis.
 
 El pipeline de detecció és asíncron amb dues cues de Redis (RQ):
 `fase1` (YOLO — troba l'ocell i el retalla) i `fase2` (CNN —
@@ -104,8 +104,30 @@ de l'esquema (`[migrations] Aplicant 0001_initial_schema.sql...`).
 | Mediaserver (HLS) | http://localhost:8888 |
 | MinIO (consola web) | http://localhost:9001 (usuari `minioadmin` / contrasenya `minioadmin123`) |
 | Postgres | `localhost:5432` (usuari `tfg` / contrasenya `tfg_dev_password` / BBDD `tfgdb`) |
+| pgAdmin | http://localhost:5050 (usuari `admin@ocellwatch.com` / contrasenya `admin_dev_password`) |
 
-## 6. Aturar-ho
+## 6. Administrar la BBDD amb pgAdmin
+
+`pgadmin` és un servei més de `docker-compose.yml`, ja apuntant al
+`postgres` del projecte. Un cop aixecat (`docker compose up -d pgadmin`
+si no vols aixecar-ho tot), entra a http://localhost:5050 amb
+`admin@ocellwatch.com` / `admin_dev_password` (credencials de
+desenvolupament, canvia-les si això surt mai del teu PC).
+
+Per registrar el servidor de Postgres dins de pgAdmin (nomes cal la
+primera vegada): botó dret sobre "Servers" -> Register -> Server. A la
+pestanya "General" posa-li un nom qualsevol (p. ex. "TFG"). A la
+pestanya "Connection":
+
+| Camp | Valor |
+|---|---|
+| Host name/address | `postgres` (nom del servei, no `localhost`) |
+| Port | `5432` |
+| Maintenance database | `tfgdb` |
+| Username | `tfg` |
+| Password | `tfg_dev_password` |
+
+## 7. Aturar-ho
 
 ```bash
 docker compose down

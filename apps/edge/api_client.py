@@ -1,3 +1,6 @@
+import mimetypes
+import os
+
 import requests
 
 
@@ -32,11 +35,14 @@ class BackendClient:
             response = requests.post(
                 f"{self.base_url}/api/detections_frame",
                 headers=self._auth_headers(),
-                files={"file": f},
+                files={"file": (os.path.basename(image_path), f, "image/jpeg")},
                 data={"detected_at": detected_at},
                 timeout=10,
             )
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(
+                f"{response.status_code} Bad Request per a {response.url}: {response.text}"
+            )
         return response.json()
 
     def send_video_detection(
@@ -58,13 +64,18 @@ class BackendClient:
         if confidence is not None:
             data["confidence"] = confidence
 
+        content_type = mimetypes.guess_type(video_path)[0] or "video/mp4"
+
         with open(video_path, "rb") as f:
             response = requests.post(
                 f"{self.base_url}/api/detections_video",
                 headers=self._auth_headers(),
-                files={"file": f},
+                files={"file": (os.path.basename(video_path), f, content_type)},
                 data=data,
                 timeout=30,
             )
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(
+                f"{response.status_code} Bad Request per a {response.url}: {response.text}"
+            )
         return response.json()

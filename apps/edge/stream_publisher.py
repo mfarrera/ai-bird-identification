@@ -30,6 +30,8 @@ class StreamPublisher:
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-tune", "zerolatency",
+            "-g", str(self.fps * 2),
+            "-sc_threshold", "0",
             "-f", "rtsp",
             self.rtsp_url,
         ]

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Hls from 'hls.js'
+import Layout from '../Layout'
 
 function ProvaTokenStream() {
   const videoRef = useRef(null)
@@ -50,60 +51,62 @@ function ProvaTokenStream() {
   }, [videoUrl])
 
   return (
-    <div style={{ padding: '30px', fontFamily: 'Arial' }}>
-      <h1>Prova de stream amb token</h1>
+    <Layout
+      title="Prova de stream amb token"
+      subtitle="Comprova manualment l'HLS d'una càmera amb o sense token JWT."
+    >
+      <div className="panel">
+        <div className="field">
+          <label>Path de la càmera</label>
+          <input
+            className="input"
+            type="text"
+            value={cameraPath}
+            onChange={(e) => setCameraPath(e.target.value)}
+            placeholder="cam1"
+          />
+        </div>
 
-      <div style={{ marginBottom: '15px' }}>
-        <label>Path de la càmera:</label>
-        <br />
-        <input
-          type="text"
-          value={cameraPath}
-          onChange={(e) => setCameraPath(e.target.value)}
-          placeholder="cam1"
-          style={{ width: '300px' }}
+        <div className="field">
+          <label>Token JWT</label>
+          <textarea
+            className="input wide"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="Enganxa aquí el token"
+            rows="5"
+          />
+        </div>
+
+        <div className="btn-row">
+          <button className="btn" onClick={() => setUsarToken(false)}>
+            Provar sense token
+          </button>
+          <button className="btn btn-primary" onClick={() => setUsarToken(true)}>
+            Provar amb token
+          </button>
+        </div>
+
+        <p className="muted" style={{ marginTop: '16px' }}>
+          <strong>URL actual:</strong> {urlActual}
+        </p>
+        <p className="muted"><strong>Estat:</strong> {missatge}</p>
+
+        <video
+          ref={videoRef}
+          controls
+          autoPlay
+          className="stream-video"
+          style={{ marginTop: '12px' }}
         />
+
+        <div className="btn-row">
+          <button className="btn" onClick={() => navigate('/admin')}>
+            Tornar al panell admin
+          </button>
+        </div>
       </div>
-
-      <div style={{ marginBottom: '15px' }}>
-        <label>Token JWT:</label>
-        <br />
-        <textarea
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="Enganxa aquí el token"
-          rows="5"
-          style={{ width: '100%', maxWidth: '800px' }}
-        />
-      </div>
-
-      <div style={{ marginBottom: '20px' }}>
-        <button onClick={() => setUsarToken(false)}>
-          Provar sense token
-        </button>
-
-        <button onClick={() => setUsarToken(true)} style={{ marginLeft: '10px' }}>
-          Provar amb token
-        </button>
-      </div>
-
-      <p><strong>URL actual:</strong> {urlActual}</p>
-      <p><strong>Estat:</strong> {missatge}</p>
-
-      <video
-        ref={videoRef}
-        controls
-        autoPlay
-        width="900"
-        style={{ backgroundColor: 'black', maxWidth: '100%' }}
-      />
-
-      <div style={{ marginTop: '20px' }}>
-        <button onClick={() => navigate('/admin')}>
-          Tornar al panell admin
-        </button>
-      </div>
-    </div>
+    </Layout>
   )
 }
 

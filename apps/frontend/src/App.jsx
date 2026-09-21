@@ -11,6 +11,7 @@ import EnviarDeteccioValidar from './pages/EnviarDeteccioValidar'
 import ProvaTokenStream from './pages/ProvaTokenStream'
 import LlistarCameresAdmin from './pages/LlistarCameresAdmin'
 import VeureStreamAdmin from './pages/VeureStreamAdmin'
+import VeureStream from './pages/VeureStream'
 import CrearComunitat from './pages/CrearComunitat'
 import LlistarComunitats from './pages/LlistarComunitats'
 import GestionarComunitat from './pages/GestionarComunitat'
@@ -27,6 +28,10 @@ function App() {
         <Route path="/principal" element={<Principal />} />
         <Route path="/pujar-imatge" element={<PujarImatge />} />
         <Route path="/pujar-video" element={<PujarVideo />} />
+        <Route path="/camera/:cameraId/stream" element={<VeureStream />} />
+        <Route path="/crear-comunitat" element={<CrearComunitat />} />
+        <Route path="/comunitats" element={<LlistarComunitats />} />
+        <Route path="/comunitats/:communityId" element={<GestionarComunitat />} />
 
         <Route path="/admin" element={<Admin />} />
         <Route path="/admin/crear-usuari" element={<CrearUsuari />} />
@@ -38,11 +43,7 @@ function App() {
         <Route path="/admin/prova-token-stream" element={<ProvaTokenStream />} />
         <Route path="/admin/cameres" element={<LlistarCameresAdmin />} />
         <Route path="/admin/camera/:cameraId/stream" element={<VeureStreamAdmin />} />
-        <Route path="/admin/crear-comunitat" element={<CrearComunitat />} />
-        <Route path="/admin/comunitats" element={<LlistarComunitats />} />
-        <Route path="/admin/comunitats/:communityId" element={<GestionarComunitat />} />
-        <Route path="/admin/notificacions-cameres" element={<NotificacionsCameres />}
-/>
+        <Route path="/admin/notificacions-cameres" element={<NotificacionsCameres />} />
       </Routes>
     </BrowserRouter>
   )

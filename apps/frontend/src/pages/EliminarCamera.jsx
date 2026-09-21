@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Layout from '../Layout'
 
 const API_URL = 'http://127.0.0.1:8000'
 
@@ -30,19 +31,30 @@ function EliminarCamera() {
   }
 
   return (
-    <div style={{ padding: '30px', textAlign: 'center' }}>
-      <h1>Eliminar càmera</h1>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {missatge && <p style={{ color: 'green' }}>{missatge}</p>}
+    <Layout title="Eliminar càmera" subtitle="Elimina una càmera registrada pel seu ID.">
+      <div className="panel">
+        {error && <div className="alert alert-error">{error}</div>}
+        {missatge && <div className="alert alert-success">{missatge}</div>}
 
-      <form onSubmit={handleDelete}>
-        <input type="number" placeholder="ID càmera" value={cameraId} onChange={(e) => setCameraId(e.target.value)} /><br /><br />
-        <button type="submit">Eliminar</button>
-      </form>
+        <form onSubmit={handleDelete}>
+          <div className="field">
+            <label>ID càmera</label>
+            <input
+              className="input"
+              type="number"
+              value={cameraId}
+              onChange={(e) => setCameraId(e.target.value)}
+            />
+          </div>
 
-      <br />
-      <button onClick={() => navigate('/admin')}>Tornar</button>
-    </div>
+          <button className="btn btn-danger" type="submit">Eliminar</button>
+        </form>
+
+        <div className="btn-row">
+          <button className="btn" onClick={() => navigate('/admin')}>Tornar</button>
+        </div>
+      </div>
+    </Layout>
   )
 }
 

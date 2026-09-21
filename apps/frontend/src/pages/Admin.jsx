@@ -1,28 +1,40 @@
 import { useNavigate } from 'react-router-dom'
+import Layout from '../Layout'
 
 function Admin() {
   const navigate = useNavigate()
 
-  return (
-    <div style={{ padding: '30px', fontFamily: 'Arial', textAlign: 'center' }}>
-      <h1>Panell d'administració</h1>
+  const accions = [
+    { label: 'Crear usuari', path: '/admin/crear-usuari' },
+    { label: 'Crear admin', path: '/admin/crear-admin' },
+    { label: 'Eliminar usuari', path: '/admin/eliminar-usuari' },
+    { label: 'Eliminar càmera', path: '/admin/eliminar-camera' },
+    { label: 'Afegir càmera', path: '/admin/afegir-camera' },
+    { label: 'Enviar detecció a validar', path: '/admin/enviar-deteccio-validar' },
+    { label: 'Provar stream amb token', path: '/admin/prova-token-stream' },
+    { label: 'Veure càmeres', path: '/admin/cameres' },
+    { label: 'Notificacions de càmeres', path: '/admin/notificacions-cameres' }
+  ]
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '300px', margin: '30px auto' }}>
-        <button onClick={() => navigate('/admin/crear-usuari')}>Crear usuari</button>
-        <button onClick={() => navigate('/admin/crear-admin')}>Crear admin</button>
-        <button onClick={() => navigate('/admin/eliminar-usuari')}>Eliminar usuari</button>
-        <button onClick={() => navigate('/admin/eliminar-camera')}>Eliminar càmera</button>
-        <button onClick={() => navigate('/admin/afegir-camera')}>Afegir càmera</button>
-        <button onClick={() => navigate('/admin/enviar-deteccio-validar')}>Enviar detecció a validar</button>
-        <button onClick={() => navigate('/admin/prova-token-stream')}>Provar stream amb token</button>
-        <button onClick={() => navigate('/admin/cameres')}>Veure càmeres</button>
-        <button onClick={() => navigate('/admin/crear-comunitat')}>Crear comunitat</button>
-        <button onClick={() => navigate('/admin/comunitats')}>Veure comunitats</button>
-        <button onClick={() => navigate('/admin/notificacions-cameres')}>Notificacions de càmeres</button>
+  return (
+    <Layout
+      title="Panell d'administració"
+      subtitle="Gestiona usuaris, càmeres i comunitats."
+    >
+      <div className="admin-grid">
+        {accions.map((a) => (
+          <div className="admin-card" key={a.path} onClick={() => navigate(a.path)}>
+            {a.label}
+          </div>
+        ))}
       </div>
 
-      <button onClick={() => navigate('/principal')}>Tornar</button>
-    </div>
+      <div className="btn-row">
+        <button className="btn" onClick={() => navigate('/principal')}>
+          Tornar al dashboard
+        </button>
+      </div>
+    </Layout>
   )
 }
 

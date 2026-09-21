@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Layout from '../Layout'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
@@ -98,71 +99,75 @@ function NotificacionsCameres() {
   }
 
   return (
-    <div style={{ padding: '30px', fontFamily: 'Arial' }}>
-      <h1>Notificacions de càmeres</h1>
+    <Layout
+      title="Notificacions de càmeres"
+      subtitle="Sol·licituds de càmeres pendents de revisió."
+    >
+      <div className="panel">
+        {error && <div className="alert alert-error">{error}</div>}
+        {missatge && <div className="alert alert-success">{missatge}</div>}
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {missatge && <p style={{ color: 'green' }}>{missatge}</p>}
+        {cameras.length === 0 && (
+          <p className="muted">No hi ha sol·licituds pendents.</p>
+        )}
 
-      {cameras.length === 0 && (
-        <p>No hi ha sol·licituds pendents.</p>
-      )}
+        <div className="entity-list">
+          {cameras.map((camera) => (
+            <div className="entity-card" key={camera.id}>
+              <p><strong>ID:</strong> {camera.id}</p>
+              <p><strong>Usuari:</strong> {camera.owner_mail}</p>
+              <p><strong>URL:</strong> {camera.url}</p>
+              <p>
+                <strong>Localització:</strong> {camera.latitude}, {camera.longitude}
+              </p>
+              <p>
+                <strong>Estat:</strong>{' '}
+                <span className="status-pill status-pending">{camera.camera_status}</span>
+              </p>
 
-      {cameras.map((camera) => (
-        <div
-          key={camera.id}
-          style={{
-            border: '1px solid #ccc',
-            borderRadius: '8px',
-            padding: '15px',
-            marginBottom: '15px'
-          }}
-        >
-          <p><strong>ID:</strong> {camera.id}</p>
-          <p><strong>Usuari:</strong> {camera.owner_mail}</p>
-          <p><strong>URL:</strong> {camera.url}</p>
-          <p>
-            <strong>Localització:</strong>{' '}
-            {camera.latitude}, {camera.longitude}
-          </p>
-          <p><strong>Estat:</strong> {camera.camera_status}</p>
+              <div className="field" style={{ marginTop: '12px' }}>
+                <label>Motiu de denegació</label>
+                <textarea
+                  className="input wide"
+                  rows="3"
+                  value={rejectionReasons[camera.id] || ''}
+                  onChange={(e) =>
+                    setRejectionReasons((current) => ({
+                      ...current,
+                      [camera.id]: e.target.value
+                    }))
+                  }
+                  placeholder="Motiu de denegació"
+                />
+              </div>
 
-          <button
-            disabled={loadingCameraId === camera.id}
-            onClick={() => enviarDecisio(camera.id, 'accepted')}
-          >
-            Acceptar
-          </button>
+              <div className="btn-row">
+                <button
+                  className="btn btn-primary"
+                  disabled={loadingCameraId === camera.id}
+                  onClick={() => enviarDecisio(camera.id, 'accepted')}
+                >
+                  Acceptar
+                </button>
+                <button
+                  className="btn btn-danger"
+                  disabled={loadingCameraId === camera.id}
+                  onClick={() => enviarDecisio(camera.id, 'denied')}
+                >
+                  Denegar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
 
-          <div style={{ marginTop: '12px' }}>
-            <textarea
-              rows="3"
-              value={rejectionReasons[camera.id] || ''}
-              onChange={(e) =>
-                setRejectionReasons((current) => ({
-                  ...current,
-                  [camera.id]: e.target.value
-                }))
-              }
-              placeholder="Motiu de denegació"
-              style={{ width: '100%', maxWidth: '600px' }}
-            />
-          </div>
-
-          <button
-            disabled={loadingCameraId === camera.id}
-            onClick={() => enviarDecisio(camera.id, 'denied')}
-            style={{ marginTop: '8px' }}
-          >
-            Denegar
+        <div className="btn-row">
+          <button className="btn" onClick={() => navigate('/admin')}>
+            Tornar al panell admin
           </button>
         </div>
-      ))}
-
-      <button onClick={() => navigate('/admin')}>
-        Tornar al panell admin
-      </button>
-    </div>
+      </div>
+    </Layout>
   )
 }
 

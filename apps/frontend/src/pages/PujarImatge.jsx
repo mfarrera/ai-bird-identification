@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Layout from '../Layout'
 
 const API_URL = 'http://127.0.0.1:8000'
 
@@ -55,39 +56,43 @@ function PujarImatge() {
   }
 
   return (
-    <div style={{ padding: '30px', fontFamily: 'Arial', textAlign: 'center' }}>
-      <h1>Pujar imatge d'ocell</h1>
+    <Layout
+      title="Pujar imatge d'ocell"
+      subtitle="Puja una foto perquè el sistema detecti i identifiqui l'ocell."
+    >
+      <div className="panel">
+        {error && <div className="alert alert-error">{error}</div>}
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+        <form onSubmit={handleUpload}>
+          <div className="field">
+            <label>Imatge</label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setFile(e.target.files[0])}
+            />
+          </div>
 
-      <form onSubmit={handleUpload}>
-        <div style={{ marginBottom: '10px' }}>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => setFile(e.target.files[0])}
-          />
-        </div>
+          <button className="btn btn-primary" type="submit" disabled={pujant}>
+            {pujant ? 'Pujant...' : 'Pujar imatge'}
+          </button>
+        </form>
 
-        <button type="submit" disabled={pujant}>
-          {pujant ? 'Pujant...' : 'Pujar imatge'}
-        </button>
-      </form>
-
-      {resultat && (
-        <div style={{ marginTop: '30px' }}>
-          <p>
-            Detecció creada (id {resultat.detection.id}, estat{' '}
-            {resultat.detection.status})
-          </p>
-          <img
-            src={resultat.detection.url}
-            alt="Detecció pujada"
-            style={{ maxWidth: '400px', marginTop: '10px' }}
-          />
-        </div>
-      )}
-    </div>
+        {resultat && (
+          <div style={{ marginTop: '20px' }}>
+            <p className="muted">
+              Detecció creada (id {resultat.detection.id}, estat{' '}
+              {resultat.detection.status})
+            </p>
+            <img
+              src={resultat.detection.url}
+              alt="Detecció pujada"
+              className="preview-media"
+            />
+          </div>
+        )}
+      </div>
+    </Layout>
   )
 }
 

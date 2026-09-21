@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import Layout from '../Layout'
 
 const API_URL = 'http://127.0.0.1:8000'
 
@@ -10,9 +11,6 @@ function GestionarComunitat() {
   const [community, setCommunity] = useState(null)
   const [error, setError] = useState('')
   const [missatge, setMissatge] = useState('')
-
-  const [searchEmail, setSearchEmail] = useState('')
-  const [userResults, setUserResults] = useState([])
 
   const [leaderSearchEmail, setLeaderSearchEmail] = useState('')
   const [leaderSearchResults, setLeaderSearchResults] = useState([])
@@ -47,32 +45,6 @@ function GestionarComunitat() {
   useEffect(() => {
     carregarComunitat()
   }, [communityId])
-
-  const buscarUsuaris = async () => {
-    try {
-      setError('')
-      setMissatge('')
-
-      const res = await fetch(
-        `${API_URL}/api/users/search?email=${encodeURIComponent(searchEmail)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      )
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.detail || 'Error cercant usuaris')
-      }
-
-      setUserResults(Array.isArray(data) ? data : [])
-    } catch (err) {
-      setError(err.message)
-    }
-  }
 
   const buscarNouLider = async () => {
     try {
@@ -130,35 +102,6 @@ function GestionarComunitat() {
       setLeaderSearchEmail('')
       setLeaderSearchResults([])
       setSelectedNewLeader(null)
-      carregarComunitat()
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  const afegirUsuari = async (userId) => {
-    try {
-      setError('')
-      setMissatge('')
-
-      const res = await fetch(`${API_URL}/api/communities/${communityId}/members`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          user_ids: [userId]
-        })
-      })
-
-      const data = await res.json()
-
-      if (!res.ok) {
-        throw new Error(data.detail || 'Error afegint usuari')
-      }
-
-      setMissatge('Usuari afegit correctament')
       carregarComunitat()
     } catch (err) {
       setError(err.message)
@@ -298,7 +241,7 @@ function GestionarComunitat() {
         throw new Error(data.detail || 'Error eliminant comunitat')
       }
 
-      navigate('/admin/comunitats')
+      navigate('/comunitats')
     } catch (err) {
       setError(err.message)
     }
@@ -306,47 +249,58 @@ function GestionarComunitat() {
 
   if (!community) {
     return (
-      <div style={{ padding: '30px', fontFamily: 'Arial' }}>
-        {error ? <p style={{ color: 'red' }}>{error}</p> : <p>Carregant comunitat...</p>}
-      </div>
+      <Layout title="Gestionar comunitat">
+        <div className="panel">
+          {error ? (
+            <div className="alert alert-error">{error}</div>
+          ) : (
+            <p className="muted">Carregant comunitat...</p>
+          )}
+        </div>
+      </Layout>
     )
   }
 
   return (
-    <div style={{ padding: '30px', fontFamily: 'Arial' }}>
-      <h1>Gestionar comunitat</h1>
+    <Layout title="Gestionar comunitat" subtitle={community.name}>
+      {error && <div className="alert alert-error">{error}</div>}
+      {missatge && <div className="alert alert-success">{missatge}</div>}
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {missatge && <p style={{ color: 'green' }}>{missatge}</p>}
-
-      <div style={{ border: '1px solid #ccc', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
+      <div className="panel">
         <p><strong>ID:</strong> {community.id}</p>
         <p><strong>Nom:</strong> {community.name}</p>
-        <p><strong>Líder:</strong> {community.leader ? community.leader.mail : 'Sense líder'}</p>
+        <p>
+          <strong>Líder:</strong>{' '}
+          {community.leader ? community.leader.mail : 'Sense líder'}
+        </p>
       </div>
 
-      <div style={{ marginBottom: '25px' }}>
-        <h3>Canviar líder</h3>
+      <div className="panel">
+        <h2>Canviar líder</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Només el líder actual pot transferir el lideratge.
+        </p>
 
-        <input
-          type="text"
-          value={leaderSearchEmail}
-          onChange={(e) => setLeaderSearchEmail(e.target.value)}
-          placeholder="Buscar usuari per email"
-        />
-        <button onClick={buscarNouLider} style={{ marginLeft: '10px' }}>
-          Cercar
-        </button>
+        <div className="btn-row">
+          <input
+            className="input wide"
+            type="text"
+            value={leaderSearchEmail}
+            onChange={(e) => setLeaderSearchEmail(e.target.value)}
+            placeholder="Buscar usuari per email"
+          />
+          <button className="btn" onClick={buscarNouLider}>Cercar</button>
+        </div>
 
         {leaderSearchResults.length > 0 && (
-          <div style={{ marginTop: '15px' }}>
+          <div className="entity-list" style={{ marginTop: '12px' }}>
             {leaderSearchResults.map((user) => (
-              <div key={user.id} style={{ marginBottom: '10px' }}>
-                {user.mail} ({user.role})
-                <button
-                  onClick={() => setSelectedNewLeader(user)}
-                  style={{ marginLeft: '10px' }}
-                >
+              <div className="entity-row" key={user.id}>
+                <div className="entity-info">
+                  <div className="title">{user.mail}</div>
+                  <div className="meta">{user.role}</div>
+                </div>
+                <button className="btn" onClick={() => setSelectedNewLeader(user)}>
                   Seleccionar
                 </button>
               </div>
@@ -354,113 +308,102 @@ function GestionarComunitat() {
           </div>
         )}
 
-        <div style={{ marginTop: '15px' }}>
+        <p className="muted" style={{ marginTop: '12px' }}>
           <strong>Nou líder seleccionat:</strong>{' '}
           {selectedNewLeader ? selectedNewLeader.mail : 'Cap'}
+        </p>
+
+        <div className="btn-row">
+          <button className="btn btn-primary" onClick={canviarLider}>
+            Canviar líder
+          </button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Usuaris</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Els usuaris s'uneixen ells mateixos des de la llista de comunitats.
+          Aquí només pots treure membres (si ets el líder).
+        </p>
+
+        {community.members.length === 0 && <p className="muted">No hi ha membres.</p>}
+
+        <div className="entity-list">
+          {community.members.map((member) => (
+            <div className="entity-row" key={member.id}>
+              <div className="entity-info">
+                <div className="title">{member.mail}</div>
+                <div className="meta">{member.role}</div>
+              </div>
+              <button className="btn btn-danger" onClick={() => eliminarUsuari(member.id)}>
+                Eliminar
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Càmeres</h2>
+
+        {community.cameras.length === 0 && (
+          <p className="muted">No hi ha càmeres associades.</p>
+        )}
+
+        <div className="entity-list">
+          {community.cameras.map((camera) => (
+            <div className="entity-row" key={camera.id}>
+              <div className="entity-info">
+                <div className="title">Càmera {camera.id}</div>
+                <div className="meta">{camera.url}</div>
+              </div>
+              <button className="btn btn-danger" onClick={() => eliminarCamera(camera.id)}>
+                Eliminar
+              </button>
+            </div>
+          ))}
         </div>
 
-        <button onClick={canviarLider} style={{ marginTop: '10px' }}>
-          Canviar líder
-        </button>
-      </div>
+        <hr className="divider" />
 
-      <div style={{ marginBottom: '25px' }}>
-        <h3>Usuaris</h3>
+        <h3>Afegir càmeres</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Cal ser membre de la comunitat per afegir-hi càmeres.
+        </p>
+        <button className="btn" onClick={carregarCameres}>Carregar càmeres</button>
 
-        {community.members.length === 0 && <p>No hi ha membres.</p>}
-
-        {community.members.map((member) => (
-          <div key={member.id} style={{ marginBottom: '10px' }}>
-            {member.mail} ({member.role})
-            <button
-              onClick={() => eliminarUsuari(member.id)}
-              style={{ marginLeft: '10px' }}
-            >
-              Eliminar
-            </button>
-          </div>
-        ))}
-
-        <hr />
-
-        <h4>Afegir usuaris</h4>
-        <input
-          type="text"
-          value={searchEmail}
-          onChange={(e) => setSearchEmail(e.target.value)}
-          placeholder="Buscar per email"
-        />
-        <button onClick={buscarUsuaris} style={{ marginLeft: '10px' }}>
-          Cercar
-        </button>
-
-        {userResults.map((user) => (
-          <div key={user.id} style={{ marginTop: '10px' }}>
-            {user.mail} ({user.role})
-            <button onClick={() => afegirUsuari(user.id)} style={{ marginLeft: '10px' }}>
-              Afegir
-            </button>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ marginBottom: '25px' }}>
-        <h3>Càmeres</h3>
-
-        {community.cameras.length === 0 && <p>No hi ha càmeres associades.</p>}
-
-        {community.cameras.map((camera) => (
-          <div key={camera.id} style={{ marginBottom: '10px' }}>
-            Càmera {camera.id} - {camera.url}
-            <button
-              onClick={() => eliminarCamera(camera.id)}
-              style={{ marginLeft: '10px' }}
-            >
-              Eliminar
-            </button>
-          </div>
-        ))}
-
-        <hr />
-
-        <h4>Afegir càmeres</h4>
-        <button onClick={carregarCameres}>Carregar càmeres</button>
-
-        {allCameras.map((camera) => (
-          <div key={camera.id} style={{ marginTop: '10px' }}>
-            <label>
+        <div className="entity-list" style={{ marginTop: '12px' }}>
+          {allCameras.map((camera) => (
+            <label className="entity-card checkbox-row" key={camera.id}>
               <input
                 type="checkbox"
                 checked={selectedCameraIds.includes(camera.id)}
                 onChange={() => toggleCamera(camera.id)}
               />
-              <span style={{ marginLeft: '8px' }}>
-                Càmera {camera.id} - {camera.url}
-              </span>
+              <span>Càmera {camera.id} - {camera.url}</span>
             </label>
-          </div>
-        ))}
+          ))}
+        </div>
 
         {allCameras.length > 0 && (
-          <div style={{ marginTop: '15px' }}>
-            <button onClick={afegirCameres}>Afegir càmeres seleccionades</button>
+          <div className="btn-row">
+            <button className="btn btn-primary" onClick={afegirCameres}>
+              Afegir càmeres seleccionades
+            </button>
           </div>
         )}
       </div>
 
-      <div style={{ marginTop: '30px' }}>
-        <button onClick={() => navigate('/admin/comunitats')}>
+      <div className="btn-row">
+        <button className="btn" onClick={() => navigate('/comunitats')}>
           Tornar a la llista de comunitats
         </button>
-
-        <button
-          onClick={eliminarComunitat}
-          style={{ marginLeft: '10px', backgroundColor: '#d9534f', color: 'white' }}
-        >
+        <button className="btn btn-danger" onClick={eliminarComunitat}>
           Eliminar comunitat
         </button>
       </div>
-    </div>
+    </Layout>
   )
 }
 

@@ -103,9 +103,6 @@ class CommunityCreate(BaseModel):
     # Nombre de la comunitat
     name: str
 
-    # Usuari que serà el líder de la comunitat
-    leader_id: int
-
 class CommunityMembersAdd(BaseModel):
     # Llista d'usuaris a afegir a la comunitat
     user_ids: list[int]
@@ -199,6 +196,37 @@ def generate_stream_token(user_id: int, camera_id: int, expires_minutes: int = 6
     token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
     return token, expires_at
 
+@app.get("/api/users/me/cameras/most-viewed")
+def get_most_viewed_cameras(request: Request, limit: int = 5):
+    """
+    Endpoint: GET /api/users/me/cameras/most-viewed
+
+    Que fa:
+    - Retorna les cameres que l'usuari connectat ha vist mes vegades
+      (basat en la taula display), ordenades de mes a menys vistes.
+    """
+    payload = verify_token(request)
+    user_id = payload.get("user_id")
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT c.id, c.url, COUNT(d.id) AS views
+            FROM display d
+            JOIN camera c ON c.id = d.camera_id
+            WHERE d.user_id = %s
+            GROUP BY c.id, c.url
+            ORDER BY views DESC, c.id
+            LIMIT %s
+        """, (user_id, limit))
+        rows = cur.fetchall()
+        return [{"id": r[0], "url": r[1], "views": r[2]} for r in rows]
+    finally:
+        cur.close()
+        conn.close()
+
+
 def verify_token(request: Request):
     """
     Llegeix el token de l'header Authorization, el valida
@@ -265,6 +293,70 @@ def require_admin(request: Request):
 
     return user
     
+def require_community_leader(community_id: int, request: Request) -> dict:
+    """
+    Comprova que l'usuari autenticat sigui el líder d'aquesta comunitat
+    (els admins es poden saltar aquesta restricció).
+    """
+
+    user = get_current_user(request)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT leader_id FROM community WHERE id = %s", (community_id,))
+        row = cur.fetchone()
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="La comunitat no existeix")
+
+        if user["role"] != "admin" and row[0] != user["user_id"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Només el líder de la comunitat pot fer aquesta acció"
+            )
+    finally:
+        cur.close()
+        conn.close()
+
+    return user
+
+
+def require_community_member(community_id: int, request: Request) -> dict:
+    """
+    Comprova que l'usuari autenticat sigui membre d'aquesta comunitat
+    (els admins es poden saltar aquesta restricció).
+    """
+
+    user = get_current_user(request)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT id FROM community WHERE id = %s", (community_id,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="La comunitat no existeix")
+
+        if user["role"] != "admin":
+            cur.execute("""
+                SELECT 1 FROM community_member
+                WHERE community_id = %s AND user_id = %s
+            """, (community_id, user["user_id"]))
+
+            if cur.fetchone() is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Has de ser membre de la comunitat per fer aquesta acció"
+                )
+    finally:
+        cur.close()
+        conn.close()
+
+    return user
+
+
 def get_current_user_role(request: Request):
     payload = verify_token(request)
     return payload["role_id"]
@@ -407,6 +499,36 @@ def login_user(data: LoginData):
         conn.close()
 
 
+@app.post("/api/auth/refresh")
+def refresh_session(request: Request):
+    """
+    Endpoint: POST /api/auth/refresh
+
+    Que fa:
+    - Sessio "lliscant": si el token de sessio actual encara es valid,
+      en genera un de nou amb una altra finestra de 2 hores. Mentre
+      l'usuari segueixi actiu (obrint pagines) abans que caduqui el
+      token, el frontend el va renovant sol i la sessio no arriba mai
+      a caducar de veritat.
+    - Si el token ja ha caducat, aquesta crida tambe falla (401) — cal
+      tornar a fer login. No hi ha cap "refresh token" separat: es fa
+      servir el mateix token, nomes cal cridar aixo abans que caduqui.
+    """
+
+    payload = verify_token(request)
+
+    token, expires_at = generate_session_token(
+        user_id=payload["user_id"],
+        mail=payload["mail"],
+        role=payload["role"]
+    )
+
+    return {
+        "token": token,
+        "expires": expires_at.isoformat()
+    }
+
+
 
 
     ##############camara##############
@@ -487,13 +609,7 @@ def request_camera(data: CameraRequestCreate, request: Request):
 
 @app.get("/api/admin/camera-requests")
 def get_pending_camera_requests(request: Request):
-    payload = verify_token(request)
-
-    if payload.get("role") != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Només els administradors poden veure les sol·licituds"
-        )
+    payload = require_admin(request)
 
     conn = get_connection()
     cur = conn.cursor()
@@ -554,13 +670,7 @@ def review_camera_request(
     - envia un correu a l'usuari.
     """
 
-    payload = verify_token(request)
-
-    if payload.get("role") != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Només els administradors poden revisar càmeres"
-        )
+    payload = require_admin(request)
 
     admin_id = payload.get("user_id")
 
@@ -1211,7 +1321,19 @@ def get_camera_stream(camera_id: int, request: Request):
             )
 
         # ------------------------------------------------------------
-        # 5. Generar token temporal de lectura
+        # 5. Registrar la visualitzacio (per a "cameres mes vistes")
+        # Una fila per usuari+camera+dia; si ja hi ha una avui no en
+        # duplica (el token es renova sol mentre es mira l'stream).
+        # ------------------------------------------------------------
+        cur.execute("""
+            INSERT INTO display (user_id, camera_id, date)
+            VALUES (%s, %s, CURRENT_DATE)
+            ON CONFLICT (user_id, camera_id, date) DO NOTHING
+        """, (user_id, db_camera_id))
+        conn.commit()
+
+        # ------------------------------------------------------------
+        # 6. Generar token temporal de lectura
         # ------------------------------------------------------------
         token, expires_at = generate_stream_token(
             user_id=user_id,
@@ -1833,21 +1955,19 @@ def user_upload_video(request: Request, file: UploadFile = File(...)):
 
 ###############################COMUNITATS#######################
 @app.post("/api/communities")
-def create_community(data: CommunityCreate):
+def create_community(data: CommunityCreate, request: Request):
     """
     Endpoint: POST /api/communities
 
     Què fa:
     - Crea una nova comunitat.
     - Comprova que el nom no existeixi.
-    - Comprova que el líder existeixi.
-    - Desa la comunitat amb el seu líder.
+    - L'usuari autenticat que la crea es converteix automàticament en líder.
     - Afegeix automàticament el líder a community_member.
 
     Què rep:
     {
-        "name": "Comunitat A",
-        "leader_id": 3
+        "name": "Comunitat A"
     }
 
     Què retorna si va bé:
@@ -1860,6 +1980,9 @@ def create_community(data: CommunityCreate):
         }
     }
     """
+
+    user = get_current_user(request)
+    leader_id = user["user_id"]
 
     conn = get_connection()
     cur = conn.cursor()
@@ -1879,26 +2002,12 @@ def create_community(data: CommunityCreate):
                 detail="Ja existeix una comunitat amb aquest nom"
             )
 
-        # Comprovem que el líder existeixi
-        cur.execute("""
-            SELECT id
-            FROM users
-            WHERE id = %s
-        """, (data.leader_id,))
-        leader_row = cur.fetchone()
-
-        if leader_row is None:
-            raise HTTPException(
-                status_code=404,
-                detail="El líder no existeix"
-            )
-
-        # Creem la comunitat
+        # Creem la comunitat (el líder és sempre qui la crea)
         cur.execute("""
             INSERT INTO community (name, leader_id)
             VALUES (%s, %s)
             RETURNING id, name, leader_id
-        """, (data.name, data.leader_id))
+        """, (data.name, leader_id))
 
         row = cur.fetchone()
         community_id = row[0]
@@ -1908,7 +2017,7 @@ def create_community(data: CommunityCreate):
             INSERT INTO community_member (community_id, user_id)
             VALUES (%s, %s)
             ON CONFLICT DO NOTHING
-        """, (community_id, data.leader_id))
+        """, (community_id, leader_id))
 
         conn.commit()
 
@@ -1927,38 +2036,33 @@ def create_community(data: CommunityCreate):
 
 
 @app.post("/api/communities/{community_id}/members")
-def add_members_to_community(community_id: int, data: CommunityMembersAdd):
+def join_community(community_id: int, request: Request):
     """
     Endpoint: POST /api/communities/{community_id}/members
 
     Què fa:
-    - Afegeix diversos usuaris a una comunitat.
+    - L'usuari autenticat s'afegeix ell mateix com a membre de la comunitat
+      (no es poden afegir altres usuaris — cadascú s'hi uneix pel seu compte).
     - Comprova que la comunitat existeixi.
-    - Comprova que cada usuari existeixi.
-    - Insereix a community_member.
-    - Si un usuari ja hi és, no falla.
+    - Si ja n'és membre, no falla (idempotent).
 
     Què rep:
-    community_id a la URL
-
-    Body:
-    {
-        "user_ids": [2, 5, 8]
-    }
+    community_id a la URL. Sense body: el membre és sempre qui fa la crida.
 
     Què retorna si va bé:
     {
-        "message": "Membres afegits correctament",
+        "message": "T'has unit a la comunitat correctament",
         "community_id": 1,
-        "added_user_ids": [2, 5, 8]
+        "user_id": 7
     }
     """
+
+    user = get_current_user(request)
 
     conn = get_connection()
     cur = conn.cursor()
 
     try:
-        # Comprovem que la comunitat existeixi
         cur.execute("""
             SELECT id
             FROM community
@@ -1972,40 +2076,18 @@ def add_members_to_community(community_id: int, data: CommunityMembersAdd):
                 detail="La comunitat no existeix"
             )
 
-        # Comprovem que hi hagi usuaris
-        if len(data.user_ids) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Has d'enviar almenys un user_id"
-            )
-
-        # Comprovem i afegim cada usuari
-        for user_id in data.user_ids:
-            cur.execute("""
-                SELECT id
-                FROM users
-                WHERE id = %s
-            """, (user_id,))
-            user_row = cur.fetchone()
-
-            if user_row is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"L'usuari amb id {user_id} no existeix"
-                )
-
-            cur.execute("""
-                INSERT INTO community_member (community_id, user_id)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-            """, (community_id, user_id))
+        cur.execute("""
+            INSERT INTO community_member (community_id, user_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """, (community_id, user["user_id"]))
 
         conn.commit()
 
         return {
-            "message": "Membres afegits correctament",
+            "message": "T'has unit a la comunitat correctament",
             "community_id": community_id,
-            "added_user_ids": data.user_ids
+            "user_id": user["user_id"]
         }
 
     finally:
@@ -2013,11 +2095,12 @@ def add_members_to_community(community_id: int, data: CommunityMembersAdd):
         conn.close()
 
 @app.post("/api/communities/{community_id}/cameras")
-def add_cameras_to_community(community_id: int, data: CommunityCamerasAdd):
+def add_cameras_to_community(community_id: int, data: CommunityCamerasAdd, request: Request):
     """
     Endpoint: POST /api/communities/{community_id}/cameras
 
     Què fa:
+    - Requereix que qui fa la crida sigui membre de la comunitat.
     - Afegeix diverses càmeres a una comunitat.
     - Comprova que la comunitat existeixi.
     - Comprova que cada càmera existeixi.
@@ -2039,6 +2122,8 @@ def add_cameras_to_community(community_id: int, data: CommunityCamerasAdd):
         "added_camera_ids": [1, 4, 6]
     }
     """
+
+    require_community_member(community_id, request)
 
     conn = get_connection()
     cur = conn.cursor()
@@ -2213,7 +2298,9 @@ def get_community_detail(community_id: int):
         conn.close()
 
 @app.delete("/api/communities/{community_id}/members/{user_id}")
-def remove_member_from_community(community_id: int, user_id: int):
+def remove_member_from_community(community_id: int, user_id: int, request: Request):
+    require_community_leader(community_id, request)
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -2254,7 +2341,9 @@ def remove_member_from_community(community_id: int, user_id: int):
         conn.close()
 
 @app.delete("/api/communities/{community_id}/cameras/{camera_id}")
-def remove_camera_from_community(community_id: int, camera_id: int):
+def remove_camera_from_community(community_id: int, camera_id: int, request: Request):
+    require_community_leader(community_id, request)
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -2277,7 +2366,9 @@ def remove_camera_from_community(community_id: int, camera_id: int):
         conn.close()
 
 @app.delete("/api/communities/{community_id}")
-def delete_community(community_id: int):
+def delete_community(community_id: int, request: Request):
+    require_community_leader(community_id, request)
+
     conn = get_connection()
     cur = conn.cursor()
 
@@ -2303,10 +2394,12 @@ def delete_community(community_id: int):
         conn.close()
 
 @app.put("/api/communities/{community_id}/leader")
-def update_community_leader(community_id: int, data: CommunityLeaderUpdate):
+def update_community_leader(community_id: int, data: CommunityLeaderUpdate, request: Request):
     """
-    Canvia el líder d'una comunitat.
+    Canvia el líder d'una comunitat. Només el líder actual ho pot fer.
     """
+
+    require_community_leader(community_id, request)
 
     conn = get_connection()
     cur = conn.cursor()
