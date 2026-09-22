@@ -63,6 +63,10 @@ pnpm-debug.log*
 *.h5
 *.pkl
 
+# Excepcio: pesos del cloud SI es pugen a git (mida assumible)
+!apps/model-ia-cloud/yolov8n.pt
+!apps/model-ia-cloud/bestgen.pt
+
 # MediaMTX local
 mediamtx
 mediamtx.exe

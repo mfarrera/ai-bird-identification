@@ -2,9 +2,31 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# libgl1/libglib2.0-0: requerides per opencv en entorns headless
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-worker-phase2.txt ./
+
+# torch/torchvision CPU-only, sense versio fixada: aquest worker no te
+# GPU (imatge python:3.11-slim), i a diferencia del worker de fase 1,
+# aqui volem la versio de torch mes recent compatible amb
+# ultralytics==8.4.159 (bestgen.pt necessita aquesta versio o
+# posterior per carregar-se). L'--index-url de CPU evita igualment que
+# es baixi la build amb CUDA (>1.5GB de franc).
+RUN pip install --no-cache-dir \
+        torch torchvision \
+        --index-url https://download.pytorch.org/whl/cpu
+
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-worker-phase2.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu
 
 COPY . .
+
+# bestgen.pt es munta com a volum (apps/model-ia-cloud a l'host), no
+# es copia a la imatge.
+VOLUME ["/app/models"]
 
 CMD ["rq", "worker", "--url", "redis://redis:6379/0", "fase2"]

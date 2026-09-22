@@ -1,0 +1,14 @@
+# Dependencies extra NOMES per al worker de fase 2 (identificacio
+# d'especie amb un YOLO especialitzat, bestgen.pt). El backend (API)
+# i el worker de fase 1 no les necessiten, per aixo van en un fitxer
+# a part, igual que fa requirements-worker-phase1.txt.
+#
+# torch/torchvision NO es fixen aqui: aquest worker fa servir una
+# versio d'ultralytics mes moderna que la de fase 1 (necessaria per
+# carregar bestgen.pt, entrenat amb una versio nova d'Ultralytics), i
+# cal deixar que pip resolgui ell mateix la versio de torch compatible
+# amb aquesta ultralytics concreta (el pip install previ al Dockerfile,
+# amb --index-url de CPU, garanteix que sigui la build CPU-only).
+ultralytics==8.4.159
+opencv-python-headless==4.10.0.84
+numpy==2.1.3
