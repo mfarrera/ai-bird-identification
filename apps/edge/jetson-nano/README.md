@@ -11,21 +11,21 @@ El mòdul utilitza un patró concurrent productor-consumidor per desacoblar el c
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         NVIDIA Jetson Orin Nano                         │
+│                         NVIDIA Jetson Orin Nano Super                        │
 │                                                                         │
 │   ┌──────────────┐                                                      │
 │   │  Càmera CSI  │                                                      │
 │   │   (IMX219)   │                                                      │
 │   └──────┬───────┘                                                      │
 │          │ GStreamer: nvarguscamerasrc (Memòria unificada NVMM)         │
-│          ▼                                                             │
+│          ▼                                                              │
 │   ┌──────────────┐     Inferència                                       │
 │   │ edge_jetson  │──── TensorRT ───▶ Bounding Boxes i Classificació     │
 │   │   (OpenCV)   │                                                      │
 │   └──────┬───────┴──────────────┬────────────────────────┐              │
 │          │                      │                        │              │
 │          │ VideoWriter          │ Retall (JPEG 90%)      │ Mètriques    │
-│          ▼                                ▼                                   ▼              │
+│          ▼                     ▼                          ▼             │
 │   ┌──────────────┐       ┌──────────────┐          ┌───────────┐        │
 │   │ Emissió RTSP │       │ Cua de Lots  │          │    Fil    │        │
 │   │(key-int=30)  │       │ (Thread-Safe)│          │  Neteja   │        │
@@ -33,13 +33,13 @@ El mòdul utilitza un patró concurrent productor-consumidor per desacoblar el c
 │          │                      │                        │              │
 └──────────┼──────────────────────┼────────────────────────┼──────────────┘
            │ RTSP (:8554)         │ HTTP Multipart (:8000) │ FS Local (/tmp)
-                ▼                                ▼                                    ▼
+           ▼                    ▼                          ▼
     ┌──────────────┐       ┌──────────────┐         ┌──────────────┐
     │   MediaMTX   │       │   Backend    │         │  Purgat de   │
     │ (Streaming)  │       │  (FastAPI)   │         │Crops (> 1 h) │
     └──────┬───────┘       └──────┬───────┘         └──────────────┘
            │ HLS                  │ S3 API
-                ▼                                ▼
+          ▼                       ▼
      Visualització          Base de Dades
        Frontend             (SeaweedFS / PG)
 
