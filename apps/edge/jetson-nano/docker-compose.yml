@@ -1,0 +1,23 @@
+name: detector-ocells-edge
+
+services:
+  detector:
+    build:
+      context: .                     # jetson-nano/ (on viu el MVP)
+      dockerfile: Dockerfile
+    image: detector-ocells:edge
+    container_name: detector-ocells-edge
+    restart: unless-stopped
+    network_mode: host               # RTSP + accés al backend per IP
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    devices:
+      - /dev/video0:/dev/video0      # càmera CSI
+    volumes:
+      - /tmp/argus_socket:/tmp/argus_socket          # daemon Argus
+      - ./models/bestgen.pt:/app/bestgen.pt:ro
+      - ./models/bestgen.engine:/app/bestgen.engine:ro    
+      - ./dades/retalls:/tmp/detection_crops         # crops persistents
+    env_file:
+      - ./config/entorn.env

@@ -5,3 +5,13 @@ __pycache__/
 models/
 media/
 crops/
+jetson-nano/models/
+jetson-nano/dades/
+jetson-nano/scripts/
+jetson-nano/docs/
+**/__pycache__/
+**/*.pyc
+**/*.engine
+.git/
+venv/
+node_modules/

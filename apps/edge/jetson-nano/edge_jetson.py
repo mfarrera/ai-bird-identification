@@ -13,56 +13,51 @@ from ultralytics import YOLO
 
 
 # ----------------------
-# CONFIGURACIÓ GENERAL
+# CONFIGURACIÓ GENERAL (via variables d'entorn)
 # ---------------------
 
 # Model YOLO optimitzat amb TensorRT per a la Jetson Nano Orin
-MODEL_PATH = "bestgen.engine"
+MODEL_PATH = os.getenv("MODEL_PATH", "/app/bestgen.pt")
 
 # Adreça del servidor Cloud (Docker)
-DOCKER_HOST = "192.168.1.144"
+DOCKER_HOST = os.getenv("DOCKER_HOST", "192.168.1.144")
 
 # Backend FastAPI
-BACKEND_URL = f"http://{DOCKER_HOST}:8000"
+BACKEND_URL = os.getenv("BACKEND_URL", f"http://{DOCKER_HOST}:8000")
 DETECTION_ENDPOINT = f"{BACKEND_URL}/api/detections_frame"
 
 # Servidor de streaming (MediaMTX)
-MEDIA_SERVER = DOCKER_HOST
-RTSP_PORT = 8554
+MEDIA_SERVER = os.getenv("MEDIA_SERVER", DOCKER_HOST)
+RTSP_PORT = int(os.getenv("RTSP_PORT", "8554"))
 
 # Credencials de la càmera registrades a la base de dades
-CAMERA_ID = 1
-PUBLISH_TOKEN = "secreto_edge_123"
+CAMERA_ID = int(os.getenv("CAMERA_ID", "1"))
+PUBLISH_TOKEN = os.getenv("PUBLISH_TOKEN", "secreto_edge_123")
 
 # Paràmetres de captura de la càmera CSI
-WIDTH = 1280
-HEIGHT = 720
-FPS = 30
+WIDTH = int(os.getenv("WIDTH", "1920"))
+HEIGHT = int(os.getenv("HEIGHT", "1080"))
+FPS = int(os.getenv("FPS", "30"))
 
 # Emmagatzematge temporal dels retalls al dispositiu Edge
-CROP_DIR = "/tmp/detection_crops"
+CROP_DIR = os.getenv("CROP_DIR", "/tmp/detection_crops")
 CROP_WIDTH = None       # None = manté la resolució original del retall
 CROP_HEIGHT = None      # None = manté la resolució original del retall
-MAX_CROPS_AGE_HOURS = 1
-CLEANUP_INTERVAL = 300  # Cada 5 minuts
+MAX_CROPS_AGE_HOURS = int(os.getenv("MAX_CROPS_AGE_HOURS", "1"))
+CLEANUP_INTERVAL = int(os.getenv("CLEANUP_INTERVAL", "300"))  # Cada 5 minuts
 
 # ---------------------
 # FILTRES DE DETECCIÓ
 #---------------------
 
-# Només s'envien deteccions amb confiança igual o superior a aquest valor
-MIN_CONFIDENCE = 0.8
-
-# Llista d'espècies permeses. Buid significa totes.
-ALLOWED_SPECIES = []
-
-# Temps mínim entre deteccions d'una mateixa zona per evitar duplicats
-MIN_DETECTION_INTERVAL = 3.0
+MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE", "0.8"))
+ALLOWED_SPECIES = os.getenv("ALLOWED_SPECIES", "").split(",") if os.getenv("ALLOWED_SPECIES") else []
+MIN_DETECTION_INTERVAL = float(os.getenv("MIN_DETECTION_INTERVAL", "3.0"))
 
 # Cua de comunicació entre el thread d'inferència i el d'enviament
-SEND_QUEUE_MAXSIZE = 200
-BATCH_INTERVAL = 0.5
-BATCH_MAX_SIZE = 20
+SEND_QUEUE_MAXSIZE = int(os.getenv("SEND_QUEUE_MAXSIZE", "200"))
+BATCH_INTERVAL = float(os.getenv("BATCH_INTERVAL", "0.5"))
+BATCH_MAX_SIZE = int(os.getenv("BATCH_MAX_SIZE", "20"))
 
 os.makedirs(CROP_DIR, exist_ok=True)
 
@@ -334,20 +329,17 @@ write_pipeline = (
     f"video/x-raw,format=BGR,width={WIDTH},height={HEIGHT},framerate={FPS}/1 ! "
     "videoconvert ! "
     "video/x-raw,format=I420 ! "
-    "x264enc tune=zerolatency speed-preset=ultrafast bitrate=2000 ! "
-    "h264parse ! "
+    "x264enc tune=zerolatency speed-preset=ultrafast bitrate=500 qp-min=20 qp-max=40 key-int-max=30 ! "
+    "h264parse config-interval=1 ! "
     "rtspclientsink "
-    f"location=rtsp://{MEDIA_SERVER}:{RTSP_PORT}/cam{CAMERA_ID} "
-    f"user-id={CAMERA_ID} "
-    f"user-pw={PUBLISH_TOKEN}"
+    f"location=rtsp://{MEDIA_SERVER}:{RTSP_PORT}/cam{CAMERA_ID}"
 )
-
 
 # ------------------------------------
 # INICIALITZACIÓ DE LA CÀMERA I EL STREAMING
 # ------------------------------------
 
-logger.info("Obrient connexió amb la càmera CSI...")
+logger.info("Obrint connexió amb la càmera CSI...")
 cap = cv2.VideoCapture(read_pipeline, cv2.CAP_GSTREAMER)
 
 if not cap.isOpened():
@@ -533,4 +525,3 @@ finally:
         detections_processed, detections_skipped
     )
     logger.info("Fi del programa.")
-    
