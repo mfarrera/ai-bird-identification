@@ -145,19 +145,12 @@ sudo systemctl restart docker
    
    ```
 
-## 5. Decisions Tècniques de Disseny
+## 5. Característiques Clau
 
-* **Memòria de Zero-Còpia (Zero-Copy):** El pipeline d'ingesta utilitza `nvarguscamerasrc` per connectar l'ISP de la placa directament amb la memòria NVMM (`video/x-raw(memory:NVMM)`). La conversió de color a BGR la realitza el maquinari dedicat `nvvidconv`, minimitzant l'ús de la CPU.
-
-* **Codificació i Control de GOP per a HLS:** El pipeline RTSP utilitza `x264enc` amb `key-int-max=30`. Això força la creació d'un *I-frame* (fotograma clau) cada 30 fotogrames (exactament 1 segon a 30 FPS), evitant desbordaments de memòria i talls en la conversió a segments HLS que realitza MediaMTX.
-
-* **Estratègia Asimètrica de Qualitat:**
-
-  * **Streaming continu:** Optimitzat a baix bitrate (500 kbps) i baixa latència (`zerolatency`), prioritari per a la supervisió en directe.
-
-  * **Evidències locals (*crops*):** Retallats en resolució nativa i emmagatzemats en format JPEG al 90% per conservar els patrons de plomatge requerits per a la validació posterior.
-
-* **Aïllament de Fallades:** L'enviament HTTP es realitza des d'un fil independent (`SenderWorker`) que agrupa les deteccions en lots (`send_batch`). Si la xarxa s'interromp temporalment, la cua bloquejant absorbeix les mostres sense frenar el bucle d'inferència de la càmera.
+* **Zero-Copy Memory:** Ingesta directa de la càmera CSI a la GPU via NVMM, minimitzant l'ús de CPU.
+* **Optimitzat per a HLS:** Control de GOP (`key-int-max=30`) per garantir un streaming web estable sense talls de segments.
+* **Qualitat Asimètrica:** Streaming en viu optimitzat (500 kbps, baixa latència) vs. evidències (*crops*) en alta qualitat (JPEG 90%).
+* **Tolerància a Fallades:** Enviament asíncron en lots amb cues thread-safe. Si la xarxa cau, la inferència no es bloqueja.
 
 ## 6. Verificació i Diagnòstic
 
