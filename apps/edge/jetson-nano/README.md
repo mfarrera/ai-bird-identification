@@ -1,15 +1,16 @@
 # Mòdul Edge: Jetson Nano Orin - Detecció i Streaming en Temps Real
 
-
 Aquest mòdul implementa el component *Edge Computing* del sistema distribuït de monitoratge i detecció d'avifauna en temps real. S'executa sobre una plataforma encastada **NVIDIA Jetson Orin Nano** amb un sensor de visió CSI (Sony IMX219).
 
 La seva responsabilitat comprèn l'adquisició de vídeo accelerada per maquinari, la inferència neuronal mitjançant motors TensorRT serialitzats, la retransmissió de vídeo anotat per RTSP i la tramesa asíncrona de retalls visuals (*crops*) i metadades cap al servidor Cloud.
+
+---
 
 ## 1. Arquitectura del Flux de Dades
 
 El mòdul utilitza un patró concurrent productor-consumidor per desacoblar el cicle de captura i inferència respecte a les operacions d'E/S i la latència de xarxa:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         NVIDIA Jetson Orin Nano                         │
 │                                                                         │
@@ -18,14 +19,14 @@ El mòdul utilitza un patró concurrent productor-consumidor per desacoblar el c
 │   │   (IMX219)   │                                                      │
 │   └──────┬───────┘                                                      │
 │          │ GStreamer: nvarguscamerasrc (Memòria unificada NVMM)         │
-│          ▼                                                             │
+│          ▼                                                              │
 │   ┌──────────────┐     Inferència                                       │
 │   │ edge_jetson  │──── TensorRT ───▶ Bounding Boxes i Classificació     │
 │   │   (OpenCV)   │                                                      │
 │   └──────┬───────┴──────────────┬────────────────────────┐              │
 │          │                      │                        │              │
 │          │ VideoWriter          │ Retall (JPEG 90%)      │ Mètriques    │
-│          ▼                                ▼                                   ▼              │
+│          ▼                                ▼                                    ▼              │
 │   ┌──────────────┐       ┌──────────────┐          ┌───────────┐        │
 │   │ Emissió RTSP │       │ Cua de Lots  │          │    Fil    │        │
 │   │(key-int=30)  │       │ (Thread-Safe)│          │  Neteja   │        │
@@ -39,11 +40,10 @@ El mòdul utilitza un patró concurrent productor-consumidor per desacoblar el c
     │ (Streaming)  │       │  (FastAPI)   │         │Crops (> 1 h) │
     └──────┬───────┘       └──────┬───────┘         └──────────────┘
            │ HLS                  │ S3 API
-                ▼                                ▼
+           ▼                      ▼
      Visualització          Base de Dades
-       Frontend             (SeaweedFS / PG)
-
-```
+       Frontend             (MinIO / PostgreSQL)
+       
 
 ## 2. Estructura del Mòdul
 
@@ -58,7 +58,6 @@ edge/
 │   ├── bestgen.pt               # Pesos originals de PyTorch
 │   └── bestgen.engine           # Motor compilat de TensorRT (FP16)
 ├── scripts/                     # Scripts auxiliars de desplegament i manteniment
-├── build.log                    # Registre de compilació de la imatge Docker
 ├── docker-compose.yml           # Orquestració del servei i perifèrics (NVIDIA runtime)
 ├── Dockerfile                   # Imatge basada en dustynv/l4t-pytorch
 ├── edge_jetson.py               # Codi font principal de l'agent Edge
@@ -177,13 +176,15 @@ sudo systemctl restart docker
 
 * **Visualització del flux HLS (navegador web):**
 
-  ```text
+  ```
   http://192.168.1.144:8888/cam1/
   ```
 
-* **Inspecció dels crops pujats al magatzem d'objectes (SeaweedFS Filer):**
+* **Inspecció dels crops pujats al magatzem d'objectes (MinIO Console):**
 
   ```
-  http://192.168.1.144:9001/buckets/detections/detections/1/
+  1. Accedir a: http://192.168.1.144:9001
+  2. Iniciar sessió amb: minioadmin / minioadmin123
+  3. Navegar al "Object Browser", anar al bucket detections per visualitzar les imatges guardades.
   
   ```

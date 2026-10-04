@@ -332,7 +332,9 @@ write_pipeline = (
     "x264enc tune=zerolatency speed-preset=ultrafast bitrate=500 qp-min=20 qp-max=40 key-int-max=30 ! "
     "h264parse config-interval=1 ! "
     "rtspclientsink "
-    f"location=rtsp://{MEDIA_SERVER}:{RTSP_PORT}/cam{CAMERA_ID}"
+    f"location=rtsp://{MEDIA_SERVER}:{RTSP_PORT}/cam{CAMERA_ID} "
+    f"user-id={CAMERA_ID} "
+    f"user-pw={PUBLISH_TOKEN}"
 )
 
 # ------------------------------------
