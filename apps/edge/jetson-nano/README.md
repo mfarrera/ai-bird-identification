@@ -26,7 +26,7 @@ El mòdul utilitza un patró concurrent productor-consumidor per desacoblar el c
 │   └──────┬───────┴──────────────┬────────────────────────┐              │
 │          │                      │                        │              │
 │          │ VideoWriter          │ Retall (JPEG 90%)      │ Mètriques    │
-│          ▼                                ▼                                    ▼              │
+│          ▼                      ▼                        ▼              │
 │   ┌──────────────┐       ┌──────────────┐          ┌───────────┐        │
 │   │ Emissió RTSP │       │ Cua de Lots  │          │    Fil    │        │
 │   │(key-int=30)  │       │ (Thread-Safe)│          │  Neteja   │        │
@@ -34,7 +34,7 @@ El mòdul utilitza un patró concurrent productor-consumidor per desacoblar el c
 │          │                      │                        │              │
 └──────────┼──────────────────────┼────────────────────────┼──────────────┘
            │ RTSP (:8554)         │ HTTP Multipart (:8000) │ FS Local (/tmp)
-                ▼                                ▼                                    ▼
+           ▼                      ▼                        ▼
     ┌──────────────┐       ┌──────────────┐         ┌──────────────┐
     │   MediaMTX   │       │   Backend    │         │  Purgat de   │
     │ (Streaming)  │       │  (FastAPI)   │         │Crops (> 1 h) │
@@ -188,3 +188,4 @@ sudo systemctl restart docker
   3. Navegar al "Object Browser", anar al bucket detections per visualitzar les imatges guardades.
   
   ```
+ 
