@@ -188,4 +188,3 @@ sudo systemctl restart docker
   3. Navegar al "Object Browser", anar al bucket detections per visualitzar les imatges guardades.
   
   ```
- 
