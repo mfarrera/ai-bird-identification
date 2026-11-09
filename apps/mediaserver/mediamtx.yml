@@ -1,0 +1,42 @@
+###############################################################
+# MediaMTX - configuració local del projecte (TFG)
+#
+# Delega l'autenticació de publish/read al Backend, que valida
+# camera_id + publish_token (o el rol/privacitat de l'usuari)
+# contra la BBDD a POST /api/mediamtx/auth.
+#
+# Sense TLS ni WebRTC en aquesta demo (veure LOCAL_DEMO.md).
+###############################################################
+
+logLevel: info
+
+# --- Autenticació HTTP ---
+# MediaMTX crida aquest endpoint per cada intent de publish/read/playback
+# passant-hi user, password, action, path, protocol, ip, etc.
+authMethod: http
+authHTTPAddress: http://host.docker.internal:8000/api/mediamtx/auth
+
+# --- RTSP: on les fonts (edge / Jetson) publiquen ---
+rtsp: yes
+rtspAddress: :8554
+protocols: [tcp]
+
+# --- RTMP, SRT: no calen en aquest projecte ---
+rtmp: no
+srt: no
+
+# --- HLS: d'on el frontend consumeix el vídeo ---
+hls: yes
+hlsAddress: :8888
+hlsAllowOrigin: '*'
+hlsVariant: mpegts
+hlsSegmentDuration: 1s
+hlsSegmentCount: 3
+
+# --- WebRTC: no implementat en aquesta demo ---
+webrtc: no
+
+# Paths dinàmics: cada font publica al seu propi path (cam1, cam2, ...)
+# sense necessitat de declarar-los explícitament d'entrada.
+paths:
+  all_others:

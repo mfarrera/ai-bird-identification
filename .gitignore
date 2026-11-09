@@ -72,6 +72,9 @@ mediamtx
 mediamtx.exe
 mediamtx.yml
 
+# Excepcio: la config del mediaserver del projecte SI es puja a git
+!apps/mediaserver/mediamtx.yml
+
 # Playwright
 test-results/
 playwright-report/
