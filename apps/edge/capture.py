@@ -8,14 +8,6 @@ class CameraCapture:
     Captura frames en un thread propi (patró producer),
     per evitar que la lectura bloquegi el pipeline de processament.
     Sempre exposa el frame MÉS RECENT (no acumula cua).
-
-    Si la font és un fitxer local de vídeo (te un FRAME_COUNT conegut),
-    es llegeix sencer a memoria un sol cop a l'arrencada i es fa un
-    bucle per index (frames[i % total]) -- evita dependre del seek
-    d'OpenCV (CAP_PROP_POS_FRAMES), que per alguns codecs/contenidors
-    no es tan instantani com hauria i deixava un buit real al stream
-    publicat cada vegada que el video arribava al final (causa del
-    bufferStalledError a hls.js).
     """
 
     def __init__(self, source: str):
@@ -44,22 +36,6 @@ class CameraCapture:
         self._running = False
         self._thread = None
 
-        self._cached_frames = None
-
-        frame_count = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        if frame_count > 0:
-            print(f"[capture] Fitxer local detectat, carregant {int(frame_count)} frames a memoria...")
-            frames = []
-            while True:
-                ok, frame = self.cap.read()
-                if not ok:
-                    break
-                frames.append(frame)
-
-            self.cap.release()
-            self._cached_frames = frames
-            print(f"[capture] {len(frames)} frames carregats. Bucle per index (sense seek).")
-
     def start(self):
         self._running = True
         self._thread = threading.Thread(target=self._update, daemon=True)
@@ -67,31 +43,6 @@ class CameraCapture:
         return self
 
     def _update(self):
-        if self._cached_frames is not None:
-            self._update_from_cache()
-        else:
-            self._update_from_live_source()
-
-    def _update_from_cache(self):
-        # No intentem simular el fps real del fitxer aqui -- el ritme
-        # de publicacio el marca el bucle principal (main.py) amb el
-        # seu propi time.sleep basat en STREAM_FPS. Aqui nomes cal
-        # mantenir sempre disponible el frame "actual", el mes fresc
-        # possible, sense fer-ho tan rapid que gasti CPU de franc.
-        total = len(self._cached_frames)
-
-        if total == 0:
-            return
-
-        i = 0
-        while self._running:
-            with self._lock:
-                self._frame = self._cached_frames[i % total].copy()
-
-            i += 1
-            time.sleep(0.01)
-
-    def _update_from_live_source(self):
         while self._running:
             ok, frame = self.cap.read()
 
