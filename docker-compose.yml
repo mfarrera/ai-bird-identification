@@ -72,17 +72,20 @@ services:
       # polling actiu.
       CHOKIDAR_USEPOLLING: "true"
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+  rustfs:
+    image: rustfs/rustfs:1.0.4
+    command: /data
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      RUSTFS_ACCESS_KEY: minioadmin
+      RUSTFS_SECRET_KEY: minioadmin123
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports:
-      - "9000:9000"   # API S3 (backend natiu i futurs workers)
+      - "9000:9000"   # API S3 (backend i workers)
       - "9001:9001"   # Consola web: http://localhost:9001
     volumes:
-      - miniodata:/data
+      - rustfs_data:/data
 
   postgres:
     image: postgres:16-alpine
@@ -149,7 +152,7 @@ services:
       # (veure database.py) — així funciona igual per a qualsevol clon del
       # repo, tingui les credencials de Postgres que tingui.
       REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: minio:9000
+      MINIO_ENDPOINT: rustfs:9000
       DB_HOST_OVERRIDE: host.docker.internal
     volumes:
       # Model de fase 1 (YOLO), independent del que fa servir l'Edge.
@@ -167,7 +170,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: minio:9000
+      MINIO_ENDPOINT: rustfs:9000
       DB_HOST_OVERRIDE: host.docker.internal
       SPECIES_MODEL_PATH: /app/models/bestgen.pt
     volumes:
@@ -175,6 +178,6 @@ services:
       - ./apps/model-ia-cloud:/app/models
 
 volumes:
-  miniodata:
+  rustfs_data:
   postgres_data:
   pgadmin_data:
