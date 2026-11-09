@@ -1,0 +1,19 @@
+# Registres de construcció / compilació
+build.log
+
+# Configuració amb credencials (només versionem el .example)
+config/entorn.env
+
+# Retallades temporals
+dades/retalls/*
+!dades/retalls/.gitkeep
+
+# Pesos dels models (es generen localment o es descarreguen a part)
+models/*.pt
+models/*.engine
+!models/.gitkeep
+
+# Memòria cau de Python
+__pycache__/
+*.pyc
+*.pyo
