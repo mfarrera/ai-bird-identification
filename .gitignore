@@ -71,3 +71,7 @@ pnpm-debug.log*
 mediamtx
 mediamtx.exe
 mediamtx.yml
+
+# Playwright
+test-results/
+playwright-report/
