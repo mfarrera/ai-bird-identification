@@ -19,6 +19,8 @@ function GestionarComunitat() {
   const [allCameras, setAllCameras] = useState([])
   const [selectedCameraIds, setSelectedCameraIds] = useState([])
 
+  const [miniatures, setMiniatures] = useState({})
+
   const token = localStorage.getItem('token')
 
   const carregarComunitat = async () => {
@@ -45,6 +47,23 @@ function GestionarComunitat() {
   useEffect(() => {
     carregarComunitat()
   }, [communityId])
+
+  useEffect(() => {
+    if (!community || !community.cameras) return
+
+    community.cameras.forEach((camera) => {
+      fetch(`${API_URL}/api/cameras/${camera.id}/detections?limit=1`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          if (Array.isArray(data) && data.length > 0 && data[0].url) {
+            setMiniatures((prev) => ({ ...prev, [camera.id]: data[0].url }))
+          }
+        })
+        .catch(() => {})
+    })
+  }, [community])
 
   const buscarNouLider = async () => {
     try {
@@ -354,6 +373,11 @@ function GestionarComunitat() {
         <div className="entity-list">
           {community.cameras.map((camera) => (
             <div className="entity-row" key={camera.id}>
+              {miniatures[camera.id] ? (
+                <img src={miniatures[camera.id]} alt="" className="thumb-img" />
+              ) : (
+                <span className="thumb">🎥</span>
+              )}
               <div className="entity-info">
                 <div className="title">Càmera {camera.id}</div>
                 <div className="meta">{camera.url}</div>

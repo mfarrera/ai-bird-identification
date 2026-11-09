@@ -8,8 +8,9 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Els workers (worker-phase1/worker-phase2) NO fan servir network_mode: host
-# com el backend, així que "localhost" de dins seu no arriba al teu Postgres
-# natiu. En lloc de repetir usuari/contrasenya a un altre lloc (i trencar-ho
+# com el backend, així que "localhost" de dins seu no arriba al Postgres
+# publicat al host. En lloc de repetir usuari/contrasenya a un altre lloc
+# (i trencar-ho
 # per a qui cloni el repo amb credencials diferents), el docker-compose.yml
 # només els passa DB_HOST_OVERRIDE=host.docker.internal, i aquí substituïm
 # només l'amfitrió, mantenint les credencials que ja hi ha a DATABASE_URL.

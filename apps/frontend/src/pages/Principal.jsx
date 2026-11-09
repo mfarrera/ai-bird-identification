@@ -14,6 +14,11 @@ function Principal() {
   const [mesVistes, setMesVistes] = useState([])
   const [carregantMesVistes, setCarregantMesVistes] = useState(true)
 
+  const [stats, setStats] = useState(null)
+  const [carregantStats, setCarregantStats] = useState(true)
+
+  const [miniatures, setMiniatures] = useState({})
+
   useEffect(() => {
     if (!usuari) {
       navigate('/')
@@ -37,7 +42,36 @@ function Principal() {
       .then((data) => setMesVistes(Array.isArray(data) ? data : []))
       .catch(() => setMesVistes([]))
       .finally(() => setCarregantMesVistes(false))
+
+    fetch(`${API_URL}/api/users/me/detections/stats`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setStats(data))
+      .catch(() => setStats(null))
+      .finally(() => setCarregantStats(false))
   }, [])
+
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    const ids = new Set([
+      ...cameres.map((c) => c.id),
+      ...mesVistes.map((c) => c.id)
+    ])
+
+    ids.forEach((id) => {
+      fetch(`${API_URL}/api/cameras/${id}/detections?limit=1`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          if (Array.isArray(data) && data.length > 0 && data[0].url) {
+            setMiniatures((prev) => ({ ...prev, [id]: data[0].url }))
+          }
+        })
+        .catch(() => {})
+    })
+  }, [cameres, mesVistes])
 
   return (
     <Layout
@@ -49,20 +83,23 @@ function Principal() {
           <div className="label">Càmeres actives</div>
           <div className="value">{carregant ? '…' : cameres.length}</div>
         </div>
-        <div className="stat-card placeholder">
+        <div className="stat-card">
           <div className="label">Deteccions avui</div>
-          <div className="value">—</div>
-          <div className="delta">Pròximament</div>
+          <div className="value">
+            {carregantStats ? '…' : (stats ? stats.detections_today : '—')}
+          </div>
         </div>
-        <div className="stat-card placeholder">
+        <div className="stat-card">
           <div className="label">Espècies identificades</div>
-          <div className="value">—</div>
-          <div className="delta">Pròximament</div>
+          <div className="value">
+            {carregantStats ? '…' : (stats ? stats.species_identified : '—')}
+          </div>
         </div>
-        <div className="stat-card placeholder">
+        <div className="stat-card">
           <div className="label">En procés</div>
-          <div className="value">—</div>
-          <div className="delta">Pròximament</div>
+          <div className="value">
+            {carregantStats ? '…' : (stats ? stats.in_progress : '—')}
+          </div>
         </div>
       </div>
 
@@ -72,7 +109,11 @@ function Principal() {
           <div className="entity-list">
             {mesVistes.map((c) => (
               <div className="entity-row" key={c.id}>
-                <span className="thumb">🎥</span>
+                {miniatures[c.id] ? (
+                  <img src={miniatures[c.id]} alt="" className="thumb-img" />
+                ) : (
+                  <span className="thumb">🎥</span>
+                )}
                 <div className="entity-info">
                   <div className="title">Càmera #{c.id}</div>
                   <div className="meta">{c.url}</div>
@@ -103,7 +144,11 @@ function Principal() {
         <div className="entity-list">
           {cameres.map((c) => (
             <div className="entity-row" key={c.id}>
-              <span className="thumb">🎥</span>
+              {miniatures[c.id] ? (
+                <img src={miniatures[c.id]} alt="" className="thumb-img" />
+              ) : (
+                <span className="thumb">🎥</span>
+              )}
               <div className="entity-info">
                 <div className="title">Càmera #{c.id}</div>
                 <div className="meta">{c.url}</div>

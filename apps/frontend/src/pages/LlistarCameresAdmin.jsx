@@ -8,6 +8,7 @@ function LlistarCameresAdmin() {
   const [cameres, setCameres] = useState([])
   const [error, setError] = useState('')
   const [missatge, setMissatge] = useState('')
+  const [miniatures, setMiniatures] = useState({})
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -54,6 +55,23 @@ function LlistarCameresAdmin() {
     carregarCameres()
   }, [navigate])
 
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+
+    cameres.forEach((camera) => {
+      fetch(`${API_URL}/api/cameras/${camera.id}/detections?limit=1`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => {
+          if (Array.isArray(data) && data.length > 0 && data[0].url) {
+            setMiniatures((prev) => ({ ...prev, [camera.id]: data[0].url }))
+          }
+        })
+        .catch(() => {})
+    })
+  }, [cameres])
+
   return (
     <Layout
       title="Llista de càmeres"
@@ -67,19 +85,29 @@ function LlistarCameresAdmin() {
         <div className="entity-list">
           {cameres.map((camera) => (
             <div className="entity-card" key={camera.id}>
-              <p><strong>ID:</strong> {camera.id}</p>
-              <p><strong>URL:</strong> {camera.url}</p>
-              <p><strong>Owner ID:</strong> {camera.owner_id}</p>
-              <p><strong>Latitud:</strong> {camera.latitude}</p>
-              <p><strong>Longitud:</strong> {camera.longitude}</p>
+              <div className="card-with-thumb">
+                <div className="card-info">
+                  <p><strong>ID:</strong> {camera.id}</p>
+                  <p><strong>URL:</strong> {camera.url}</p>
+                  <p><strong>Owner ID:</strong> {camera.owner_id}</p>
+                  <p><strong>Latitud:</strong> {camera.latitude}</p>
+                  <p><strong>Longitud:</strong> {camera.longitude}</p>
 
-              <div className="btn-row">
-                <button
-                  className="btn btn-primary"
-                  onClick={() => navigate(`/admin/camera/${camera.id}/stream`)}
-                >
-                  Veure stream
-                </button>
+                  <div className="btn-row">
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => navigate(`/admin/camera/${camera.id}/stream`)}
+                    >
+                      Veure stream
+                    </button>
+                  </div>
+                </div>
+
+                {miniatures[camera.id] ? (
+                  <img src={miniatures[camera.id]} alt="" className="card-thumb-img" />
+                ) : (
+                  <div className="card-thumb-placeholder">🎥</div>
+                )}
               </div>
             </div>
           ))}

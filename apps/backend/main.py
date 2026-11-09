@@ -227,6 +227,60 @@ def get_most_viewed_cameras(request: Request, limit: int = 5):
         conn.close()
 
 
+@app.get("/api/users/me/detections/stats")
+def get_my_detections_stats(request: Request):
+    """
+    Endpoint: GET /api/users/me/detections/stats
+
+    Que fa:
+    - Retorna comptadors resum de deteccions de l'usuari connectat
+      (cameres propies + pujades manuals seves): deteccions d'avui,
+      especies diferents identificades, i deteccions encara en
+      proces (fase1/fase2).
+    """
+    payload = verify_token(request)
+    user_id = payload.get("user_id")
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM detections d
+            LEFT JOIN camera c ON c.id = d.id_camera
+            WHERE (c.owner_id = %s OR d.user_id = %s)
+              AND d.detected_at >= CURRENT_DATE
+        """, (user_id, user_id))
+        detections_today = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(DISTINCT sd.species_id)
+            FROM species_detected sd
+            JOIN detections d ON d.id = sd.detection_id
+            LEFT JOIN camera c ON c.id = d.id_camera
+            WHERE (c.owner_id = %s OR d.user_id = %s)
+        """, (user_id, user_id))
+        species_identified = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM detections d
+            LEFT JOIN camera c ON c.id = d.id_camera
+            WHERE (c.owner_id = %s OR d.user_id = %s)
+              AND d.status IN ('fase1', 'fase2')
+        """, (user_id, user_id))
+        in_progress = cur.fetchone()[0]
+
+        return {
+            "detections_today": detections_today,
+            "species_identified": species_identified,
+            "in_progress": in_progress
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
 def verify_token(request: Request):
     """
     Llegeix el token de l'header Authorization, el valida
@@ -1351,6 +1405,111 @@ def get_camera_stream(camera_id: int, request: Request):
             "expires": expires_at.isoformat()
         }
 
+    finally:
+        cur.close()
+        conn.close()
+
+@app.get("/api/cameras/{camera_id}/detections")
+def get_camera_detections(camera_id: int, request: Request, limit: int = 50):
+    """
+    Endpoint: GET /api/cameras/{camera_id}/detections
+
+    Que fa:
+    - Mateixos permisos que /api/cameras/{camera_id}/stream (admin,
+      propietari, publica, o membre de comunitat si es community).
+    - Retorna les ultimes deteccions d'aquesta camera, amb l'especie
+      identificada (si n'hi ha) i la confianca.
+    """
+    payload = verify_token(request)
+    user_id = payload.get("user_id")
+    role = payload.get("role")
+
+    if user_id is None or role is None:
+        raise HTTPException(
+            status_code=401,
+            detail="El token de sessio no conte la informacio necessaria"
+        )
+
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT c.id, c.owner_id, c.camera_status, u.privacity
+            FROM camera c
+            JOIN users u ON u.id = c.owner_id
+            WHERE c.id = %s
+        """, (camera_id,))
+        camera_row = cur.fetchone()
+
+        if camera_row is None:
+            raise HTTPException(status_code=404, detail="La camera no existeix")
+
+        db_camera_id = camera_row[0]
+        owner_id = camera_row[1]
+        camera_status_value = camera_row[2]
+        privacity = camera_row[3]
+
+        if camera_status_value != "accepted":
+            raise HTTPException(status_code=403, detail="La camera no esta acceptada")
+
+        allowed = False
+
+        if role == "admin":
+            allowed = True
+        elif owner_id == user_id:
+            allowed = True
+        elif privacity == "public":
+            allowed = True
+        elif privacity == "community":
+            cur.execute("""
+                SELECT 1
+                FROM camera_community cc
+                JOIN community_member cm ON cm.community_id = cc.community_id
+                WHERE cc.camera_id = %s AND cm.user_id = %s
+                LIMIT 1
+            """, (camera_id, user_id))
+            allowed = cur.fetchone() is not None
+        elif privacity == "private":
+            allowed = False
+        else:
+            raise HTTPException(status_code=500, detail="La privacitat de l'usuari no es valida")
+
+        if not allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="No tens permisos per veure les deteccions d'aquesta camera"
+            )
+
+        cur.execute("""
+            SELECT
+                d.id,
+                d.detected_at,
+                d.status,
+                d.url,
+                s.name AS species_name,
+                sd.confidence
+            FROM detections d
+            LEFT JOIN species_detected sd ON sd.detection_id = d.id
+            LEFT JOIN species s ON s.id = sd.species_id
+            WHERE d.id_camera = %s
+            ORDER BY d.detected_at DESC
+            LIMIT %s
+        """, (db_camera_id, limit))
+
+        rows = cur.fetchall()
+
+        detections = []
+        for row in rows:
+            detections.append({
+                "id": row[0],
+                "detected_at": row[1].isoformat() if row[1] else None,
+                "status": row[2],
+                "url": get_url(row[3]) if row[3] else None,
+                "species_name": row[4],
+                "confidence": float(row[5]) if row[5] is not None else None
+            })
+
+        return detections
     finally:
         cur.close()
         conn.close()

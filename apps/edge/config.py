@@ -40,9 +40,10 @@ class Config:
     # --- Emmagatzematge local temporal de crops ---
     CROPS_DIR = os.getenv("CROPS_DIR", "./crops")
 
-    # --- Resolució del stream processat (baixa resolució per estalviar ample de banda) ---
+    # --- Resolució i ritme del stream processat (baixa resolució per estalviar ample de banda) ---
     STREAM_WIDTH = int(os.getenv("STREAM_WIDTH", "640"))
     STREAM_HEIGHT = int(os.getenv("STREAM_HEIGHT", "360"))
+    STREAM_FPS = int(os.getenv("STREAM_FPS", "15"))
 
 
 config = Config()

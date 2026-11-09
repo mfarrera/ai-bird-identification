@@ -35,12 +35,16 @@ def main():
         rtsp_url=config.mediaserver_publish_url,
         width=config.STREAM_WIDTH,
         height=config.STREAM_HEIGHT,
+        fps=config.STREAM_FPS,
     ).start()
 
     last_detection_sent_at = 0.0
+    frame_interval = 1.0 / config.STREAM_FPS
 
     try:
         while True:
+            loop_start = time.time()
+
             frame = capture.read()
             if frame is None:
                 time.sleep(0.05)
@@ -49,12 +53,16 @@ def main():
             # --- Fase 1: Model 1 (moviment) ---
             has_motion, _boxes = motion_detector.detect(frame)
 
-            if has_motion:
-                # --- Fase 2: Model 2 (YOLO, només si hi ha moviment) ---
+            now = time.time()
+            if has_motion and (now - last_detection_sent_at) > DETECTION_COOLDOWN_SECONDS:
+                # --- Fase 2: Model 2 (YOLO) --- nomes s'executa si hi ha
+                # moviment I ja ha passat el cooldown: evita cridar YOLO
+                # (car en CPU) en cada frame quan hi ha moviment gairebe
+                # constant, que abans deixava el bucle principal -- i per
+                # tant la publicacio del stream -- anant molt lent.
                 detections = bird_classifier.classify(frame)
 
-                now = time.time()
-                if detections and (now - last_detection_sent_at) > DETECTION_COOLDOWN_SECONDS:
+                if detections:
                     best = max(detections, key=lambda d: d.confidence)
 
                     # --- Cropping + enviament ---
@@ -77,6 +85,16 @@ def main():
             # --- Publicació del stream en baixa resolució (sempre) ---
             resized = cv2.resize(frame, (config.STREAM_WIDTH, config.STREAM_HEIGHT))
             publisher.push_frame(resized)
+
+            # Mantenim el ritme real de publicacio a STREAM_FPS: si
+            # aquesta volta ha anat mes rapida que l'interval (frame
+            # sense deteccio nova), esperem la resta; si ha anat mes
+            # lenta (per exemple, la volta que sí crida YOLO), seguim
+            # sense esperar -- mai dormim un temps negatiu.
+            elapsed = time.time() - loop_start
+            remaining = frame_interval - elapsed
+            if remaining > 0:
+                time.sleep(remaining)
 
     except KeyboardInterrupt:
         print("[edge] Aturant pipeline...")

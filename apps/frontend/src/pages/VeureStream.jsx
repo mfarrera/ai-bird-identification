@@ -17,6 +17,10 @@ function VeureStream() {
   const [missatge, setMissatge] = useState('')
   const [streamUrl, setStreamUrl] = useState('')
 
+  const [deteccions, setDeteccions] = useState([])
+  const [carregantDeteccions, setCarregantDeteccions] = useState(true)
+  const [errorDeteccions, setErrorDeteccions] = useState('')
+
   const obtenirTokenIStream = async () => {
     const tokenSessio = localStorage.getItem('token')
 
@@ -33,6 +37,28 @@ function VeureStream() {
     }
 
     return data
+  }
+
+  const carregarDeteccions = async () => {
+    const tokenSessio = localStorage.getItem('token')
+
+    try {
+      const res = await fetch(`${API_URL}/api/cameras/${cameraId}/detections`, {
+        headers: { Authorization: `Bearer ${tokenSessio}` }
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.detail || 'No s’han pogut carregar les deteccions')
+      }
+
+      setDeteccions(Array.isArray(data) ? data : [])
+    } catch (err) {
+      setErrorDeteccions(err.message)
+    } finally {
+      setCarregantDeteccions(false)
+    }
   }
 
   const programarRenovacioToken = (expiresIso) => {
@@ -92,6 +118,7 @@ function VeureStream() {
     }
 
     carregarStreamInicial()
+    carregarDeteccions()
 
     return () => {
       if (refreshTimeoutRef.current) {
@@ -138,6 +165,16 @@ function VeureStream() {
     }
   }, [streamUrl])
 
+  const etiquetaEstat = (deteccio) => {
+    if (deteccio.status === 'fase1' || deteccio.status === 'fase2') {
+      return 'Analitzant...'
+    }
+    if (deteccio.species_name) {
+      return deteccio.species_name
+    }
+    return 'Cap espècie identificada'
+  }
+
   return (
     <Layout title={`Stream de la càmera ${cameraId}`}>
       <div className="panel">
@@ -156,6 +193,37 @@ function VeureStream() {
           <button className="btn" onClick={() => navigate('/principal')}>
             Tornar al dashboard
           </button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Deteccions recents</h2>
+
+        {errorDeteccions && <div className="alert alert-error">{errorDeteccions}</div>}
+
+        {carregantDeteccions && <p className="muted">Carregant deteccions...</p>}
+
+        {!carregantDeteccions && deteccions.length === 0 && !errorDeteccions && (
+          <p className="muted">Encara no hi ha cap detecció registrada per a aquesta càmera.</p>
+        )}
+
+        <div className="entity-list">
+          {deteccions.map((d) => (
+            <div className="entity-row" key={d.id}>
+              {d.url ? (
+                <img src={d.url} alt="Detecció" className="thumb-img" />
+              ) : (
+                <span className="thumb">🐦</span>
+              )}
+              <div className="entity-info">
+                <div className="title">{etiquetaEstat(d)}</div>
+                <div className="meta">
+                  {d.detected_at ? new Date(d.detected_at).toLocaleString() : ''}
+                  {d.confidence != null ? ` · ${(d.confidence * 100).toFixed(0)}% de confiança` : ''}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </Layout>
